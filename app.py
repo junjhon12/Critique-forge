@@ -15,7 +15,7 @@ st.text("You Write. We Grade.")
 st.markdown("Upload your manuscript to analyze its structural integrity.")
 
 # Ingestion Zone
-uploaded_file = st.file_uploader("Import text file here", type = ["txt","md","log","csv","json","docx","rtf","odt","pdf"])
+uploaded_file = st.file_uploader("Import text file here", type = ["txt","md","log","csv","json"])
 text_input = st.text_area("Or paste the content here:", height=250)
 
 if st.button("Analyze Text Content"):
@@ -35,25 +35,47 @@ if st.button("Analyze Text Content"):
                 results = analyze_chunk(target_chunk)
                 st.success("Grading Complete!")
                 st.header("Content Grade")
+                
+                # Fetch the dynamic results from the AI
                 col1, col2 = st.columns(2)
+                
                 with col1:
                     st.subheader("Agency & Conflict")
-                    st.write("Character Agency")
-                    st.progress(85)
-                    st.info("The protagonist actively chooses to confront the antagonist.")
+                    
+                    # --- Dynamic Agency Pillar ---
+                    agency = results.get("agency", {})
+                    st.write("**Character Agency**")
+                    st.progress(agency.get("score", 0))
+                    st.info(agency.get("analysis", "No analysis provided."))
+                    st.success(f"**Actionable Tip:** {agency.get('actionable_advice', '')}")
 
-                    st.write("Conflict & Stakes")
-                    st.progress(60)
-                    st.warning("Physical conflict is clear; emotional stakes are undefined.")
+                    st.write("---")
+                    
+                    # --- Dynamic Conflict Pillar ---
+                    conflict = results.get("conflict_and_stakes", {})
+                    st.write("**Conflict & Stakes**")
+                    st.progress(conflict.get("score", 0))
+                    st.warning(conflict.get("analysis", "No analysis provided."))
+                    st.success(f"**Actionable Tip:** {conflict.get('actionable_advice', '')}")
                     
                 with col2:
                     st.subheader("Structure & Arcs")
-                    st.write("Compelling Arcs")
-                    st.progress(75)
-                    st.info("Clear shift in perspective post-inciting incident.")
                     
-                    st.write("Tight Scene Structure")
-                    st.progress(90)
-                    st.success("Excellent pacing with no unnecessary exposition.")
+                    # --- Dynamic Arcs Pillar ---
+                    arcs = results.get("compelling_arcs", {})
+                    st.write("**Compelling Arcs**")
+                    st.progress(arcs.get("score", 0))
+                    st.info(arcs.get("analysis", "No analysis provided."))
+                    st.success(f"**Actionable Tip:** {arcs.get('actionable_advice', '')}")
+                    
+                    st.write("---")
+                    
+                    # --- Dynamic Structure Pillar ---
+                    structure = results.get("tight_scene_structure", {})
+                    st.write("**Tight Scene Structure**")
+                    st.progress(structure.get("score", 0))
+                    st.info(structure.get("analysis", "No analysis provided."))
+                    st.success(f"**Actionable Tip:** {structure.get('actionable_advice', '')}")
+                    
             except Exception as e:
                 st.error(f"An error occurred during grading: {str(e)}")
