@@ -114,9 +114,6 @@ if st.button("Analyze Manuscript"):
             st.header("Average Content Grades")
             col1, col2 = st.columns(2)
             
-            # For the summary, we'll display the averages and use the actionable advice from the LOWEST scoring chunk
-            # (To keep the code clean, we will just display the advice from the most recent/final chunk here, 
-            # but the downloadable report will contain everything).
             final_chunk = all_results[-1] 
 
             with col1:
@@ -141,6 +138,17 @@ if st.button("Analyze Manuscript"):
                 st.progress(avg_scores["tight_scene_structure"])
                 st.success(f"**Tip from Final Scene:** {final_chunk.get('tight_scene_structure', {}).get('actionable_advice', '')}")
             
+            # --- PROSE SNIPER SECTION ---
+            st.write("---")
+            st.subheader("🎯 The 'Show, Don't Tell' Prose Sniper")
+            sniper = final_chunk.get("prose_sniper", {})
+            
+            if sniper and sniper.get("bad_quote"):
+                st.error(f"**Target Acquired (Telling / Passive Voice):**\n> \"{sniper.get('bad_quote')}\"")
+                st.success(f"**Sniper Rewrite (Showing / Active Voice):**\n> \"{sniper.get('rewritten_example')}\"")
+            else:
+                st.info("No major prose violations detected in this section. Clean writing!")
+
             # --- DOWNLOAD REPORT ---
             report_str = generate_markdown_report(avg_scores, all_results, pacing_data)
             st.download_button(
