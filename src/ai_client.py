@@ -1,6 +1,31 @@
 import os
 import json
+from typing import TypedDict, cast
 from groq import Groq
+
+# --- STRICT TYPE DEFINITIONS ---
+class PillarData(TypedDict):
+    score: int
+    analysis: str
+    actionable_advice: str
+
+class ProseSniperData(TypedDict):
+    bad_quote: str
+    rewritten_example: str
+
+class CharacterData(TypedDict):
+    name: str
+    physical_traits: str
+    current_motivation: str
+
+class CritiqueResult(TypedDict):
+    agency: PillarData
+    conflict_and_stakes: PillarData
+    compelling_arcs: PillarData
+    tight_scene_structure: PillarData
+    prose_sniper: ProseSniperData
+    character_codex: list[CharacterData]
+
 
 # Define the personas
 PERSONAS = {
@@ -66,7 +91,8 @@ Output format must exactly match this JSON schema:
   ]
 }"""
 
-def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic") -> dict:
+# Notice the updated return type here
+def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic") -> CritiqueResult:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY is missing from environment variables.")
@@ -93,4 +119,6 @@ def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic") -> dict:
     if raw_content.endswith("```"):
         raw_content = raw_content.rsplit("\n", 1)[0]
         
-    return json.loads(raw_content.strip())
+    # We use cast() to securely bridge the dynamic json.loads output to our static TypedDict
+    parsed_result = cast(CritiqueResult, json.loads(raw_content.strip()))
+    return parsed_result
