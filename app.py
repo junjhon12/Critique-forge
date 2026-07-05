@@ -228,6 +228,18 @@ if st.button("Analyze Manuscript"):
                     + "brief moments of resolution (valleys). Flat lines indicate pacing issues."
                 )
 
+                # --- PACING LULL DETECTION ---
+                lull_threshold = 50
+                lull_sections = [
+                    i + 1 for i, score in enumerate(pacing_data[pillar_choice]) if score < lull_threshold
+                ]
+                if lull_sections:
+                    section_list = ", ".join(str(s) for s in lull_sections)
+                    _ = st.warning(
+                        f"⚠️ **Pacing lull detected** in {_format_pillar_label(pillar_choice)}: "
+                        + f"Section(s) {section_list} scored below {lull_threshold}/100."
+                    )
+
             _ = st.header("Average Content Grades")
             col1, col2 = st.columns(2)
 
