@@ -49,6 +49,7 @@ def generate_markdown_report(
     pacing_data: list[int],
     all_characters: dict[str, CharacterData] | None = None,
     prose_snipers: list[SniperHit] | None = None,
+    section_scores: list[float] | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -59,6 +60,10 @@ def generate_markdown_report(
     md += f"- **Compelling Arcs:** {avg_scores['compelling_arcs']} / 100\n"
     md += f"- **Tight Scene Structure:** {avg_scores['tight_scene_structure']} / 100\n\n"
 
+    # --- WEAKEST SECTION ---
+    if section_scores:
+        weakest_idx = section_scores.index(min(section_scores))
+        md += f"**🔻 Weakest Section:** Section {weakest_idx + 1} (avg {section_scores[weakest_idx]:.0f}/100)\n\n"
     # --- CHARACTER CODEX ---
     if all_characters:
         md += "---\n## 📖 Character Codex\n\n"
@@ -86,6 +91,8 @@ def generate_markdown_report(
             md += f"> *Actionable Tip:* {data.get('actionable_advice', '')}\n\n"
         md += "---\n"
     return md
+
+    
 
 
 # --- PAGE CONFIG & SIDEBAR ---
@@ -133,6 +140,7 @@ if st.button("Analyze Manuscript"):
         }
         all_characters: dict[str, CharacterData] = {}  # Tracks entities across chunks
         prose_snipers: list[SniperHit] = []  # Tracks every flagged sentence across chunks
+        section_scores: list[float] = []  # Tracks each section's overall average, to find the weakest
 
         progress_bar = st.progress(0, text="Initializing Editor...")
 
@@ -144,9 +152,16 @@ if st.button("Analyze Manuscript"):
                 )
                 result: CritiqueResult = analyze_chunk(chunk, persona=selected_persona)
                 all_results.append(result)
-
+                
                 # Store pacing data
                 pacing_data.append(result.get("conflict_and_stakes", {}).get("score", 0))  # type: ignore[assignment]
+                
+                # --- TRACK WEAKEST SECTION ---
+                section_avg = sum(
+                    result.get(p, {}).get("score", 0)  # type: ignore[assignment]
+                    for p in ["agency", "conflict_and_stakes", "compelling_arcs", "tight_scene_structure"]
+                ) / 4
+                section_scores.append(section_avg)
 
                 # Accumulate scores
                 for pillar in avg_scores.keys():
@@ -243,8 +258,28 @@ if st.button("Analyze Manuscript"):
             else:
                 _ = st.info("No major prose violations detected across the manuscript. Clean writing!")
 
+            # --- WEAKEST SECTION FINDER ---
+            _ = st.write("---")
+            _ = st.subheader("🔻 Weakest Section")
+
+            weakest_idx = section_scores.index(min(section_scores))
+            weakest_score = section_scores[weakest_idx]
+            weakest_result = all_results[weakest_idx]
+
+            _ = st.warning(
+                f"**Section {weakest_idx + 1}** scored lowest overall, averaging "
+                + f"**{weakest_score:.0f}/100** across all four pillars."
+            )
+            for pillar in ["agency", "conflict_and_stakes", "compelling_arcs", "tight_scene_structure"]:
+                pillar_data = weakest_result.get(pillar, {})  # type: ignore[assignment]
+                with st.expander(f"{pillar.replace('_', ' ').title()} ({pillar_data.get('score', 0)}/100)"):
+                    _ = st.write(f"**Analysis:** {pillar_data.get('analysis', '')}")
+                    _ = st.write(f"**Actionable Tip:** {pillar_data.get('actionable_advice', '')}")
+
             # --- DOWNLOAD REPORT ---
-            report_str = generate_markdown_report(avg_scores, all_results, pacing_data, all_characters, prose_snipers)
+            report_str = generate_markdown_report(
+                avg_scores, all_results, pacing_data, all_characters, prose_snipers, section_scores
+            )
             _ = st.download_button(
                 label="📥 Download Full Offline Report",
                 data=report_str,
