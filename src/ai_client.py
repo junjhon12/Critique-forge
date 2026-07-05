@@ -27,7 +27,6 @@ class CritiqueResult(TypedDict):
     character_codex: list[CharacterData]
 
 
-# Define the personas
 PERSONAS = {
     "Ruthless Critic": """You are an elite, highly analytical, and RUTHLESS Developmental Editor AI working for a top-tier publishing house. Your sole function is to read narrative text and evaluate it based strictly on four foundational pillars of storytelling: Agency, Conflict & Stakes, Compelling Arcs, and Tight Scene Structure. DO NOT BE POLITE. DO NOT FLATTER THE WRITER. You must be hyper-critical. Most amateur writing is deeply flawed, and your scores must reflect reality. 
 
@@ -91,7 +90,6 @@ Output format must exactly match this JSON schema:
   ]
 }"""
 
-# Notice the updated return type here
 def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic") -> CritiqueResult:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -119,6 +117,5 @@ def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic") -> Critique
     if raw_content.endswith("```"):
         raw_content = raw_content.rsplit("\n", 1)[0]
         
-    # We use cast() to securely bridge the dynamic json.loads output to our static TypedDict
     parsed_result = cast(CritiqueResult, json.loads(raw_content.strip()))
     return parsed_result
