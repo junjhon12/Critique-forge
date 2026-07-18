@@ -27,6 +27,7 @@ class CritiqueResult(TypedDict):
     character_codex: list[CharacterData]
 
 
+# Define the personas
 PERSONAS = {
     "Ruthless Critic": """You are an elite, highly analytical, and RUTHLESS Developmental Editor AI working for a top-tier publishing house. Your sole function is to read narrative text and evaluate it based strictly on four foundational pillars of storytelling: Agency, Conflict & Stakes, Compelling Arcs, and Tight Scene Structure. DO NOT BE POLITE. DO NOT FLATTER THE WRITER. You must be hyper-critical. Most amateur writing is deeply flawed, and your scores must reflect reality. 
 
@@ -90,32 +91,73 @@ Output format must exactly match this JSON schema:
   ]
 }"""
 
-def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic") -> CritiqueResult:
+# Notice the updated return type here
+REQUIRED_KEYS = [
+    "agency", "conflict_and_stakes", "compelling_arcs",
+    "tight_scene_structure", "prose_sniper", "character_codex",
+]
+
+
+def _extract_json(raw: str) -> str:
+    """Strip markdown code fences the model sometimes wraps its JSON in."""
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+    if cleaned.endswith("```"):
+        cleaned = cleaned.rsplit("\n", 1)[0]
+    return cleaned.strip()
+
+
+def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic", max_retries: int = 2) -> CritiqueResult:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY is missing from environment variables.")
-    
+
     client = Groq(api_key=api_key)
     full_system_prompt = PERSONAS.get(persona, PERSONAS["Ruthless Critic"]) + "\n\n" + JSON_SCHEMA
-    
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant", 
-        messages=[
-            {"role": "system", "content": full_system_prompt},
-            {"role": "user", "content": f"Analyze the following text according to your system instructions:\n\n{text_chunk}"}
-        ],
-        temperature=0.1, 
+
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": full_system_prompt},
+        {"role": "user", "content": f"Analyze the following text according to your system instructions:\n\n{text_chunk}"}
+    ]
+
+    last_error: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=messages,  # pyright: ignore[reportArgumentType]
+                temperature=0.1,
+            )
+
+            content = response.choices[0].message.content
+            if content is None:
+                raise ValueError("The LLM API returned an empty response.")
+
+            raw_content = _extract_json(content)
+            parsed_result = cast(CritiqueResult, json.loads(raw_content))
+
+            missing = [key for key in REQUIRED_KEYS if key not in parsed_result]
+            if missing:
+                raise ValueError(f"Response is missing required key(s): {', '.join(missing)}")
+
+            return parsed_result
+
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = e
+            if attempt < max_retries:
+                # Ask the model to fix its own malformed output on the next attempt.
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your previous response was not valid JSON matching the required schema "
+                        f"(error: {e}). Respond again with ONLY the corrected JSON object, "
+                        "no markdown formatting, no commentary."
+                    )
+                })
+                continue
+
+    raise ValueError(
+        f"Failed to get a valid response after {max_retries + 1} attempt(s). Last error: {last_error}"
     )
-    
-    content = response.choices[0].message.content
-    if content is None:
-        raise ValueError("The LLM API returned an empty response.")
-        
-    raw_content = content.strip()
-    if raw_content.startswith("```"):
-        raw_content = raw_content.split("\n", 1)[-1]
-    if raw_content.endswith("```"):
-        raw_content = raw_content.rsplit("\n", 1)[0]
-        
-    parsed_result = cast(CritiqueResult, json.loads(raw_content.strip()))
-    return parsed_result
