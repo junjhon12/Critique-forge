@@ -5,17 +5,20 @@ from dotenv import load_dotenv
 from typing import TypedDict, cast
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from src.chunker import user_text
-from src.ai_client import analyze_chunk, CritiqueResult, CharacterData
+from src.ai_client import analyze_chunk, CritiqueResult, CharacterData, PillarData
 
 _ = load_dotenv()
 
+PILLAR_KEYS: list[str] = ["agency", "conflict_and_stakes", "compelling_arcs", "tight_scene_structure"]
 
-# --- STRICT TYPE DEFINITIONS (app-level) ---
-class AvgScores(TypedDict):
-    agency: int
-    conflict_and_stakes: int
-    compelling_arcs: int
-    tight_scene_structure: int
+
+def _pillar_data(result: CritiqueResult, pillar: str) -> PillarData:
+    """Look up a pillar's data by a runtime key without the result widening to Any."""
+    return cast(PillarData, result.get(pillar, {}))
+
+
+def _format_pillar_label(pillar: str) -> str:
+    return pillar.replace("_", " ").title()
 
 
 class SniperHit(TypedDict):
@@ -44,20 +47,25 @@ def extract_text_from_file(uploaded_file: UploadedFile) -> str:
 
 
 def generate_markdown_report(
-    avg_scores: AvgScores,
+    avg_scores: dict[str, int],
     all_results: list[CritiqueResult],
-    pacing_data: list[int],
     all_characters: dict[str, CharacterData] | None = None,
     prose_snipers: list[SniperHit] | None = None,
+    section_scores: list[float] | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
-    md += f"*Analyzed {len(pacing_data)} section(s).*\n\n"
+    md += f"*Analyzed {len(all_results)} section(s).*\n\n"
     md += "## Final Average Scores\n"
     md += f"- **Agency:** {avg_scores['agency']} / 100\n"
     md += f"- **Conflict & Stakes:** {avg_scores['conflict_and_stakes']} / 100\n"
     md += f"- **Compelling Arcs:** {avg_scores['compelling_arcs']} / 100\n"
     md += f"- **Tight Scene Structure:** {avg_scores['tight_scene_structure']} / 100\n\n"
+
+    # --- WEAKEST SECTION ---
+    if section_scores:
+        weakest_idx = section_scores.index(min(section_scores))
+        md += f"**🔻 Weakest Section:** Section {weakest_idx + 1} (avg {section_scores[weakest_idx]:.0f}/100)\n\n"
 
     # --- CHARACTER CODEX ---
     if all_characters:
@@ -79,9 +87,9 @@ def generate_markdown_report(
 
     for i, result in enumerate(all_results):
         md += f"### Section {i+1}\n"
-        for pillar in ["agency", "conflict_and_stakes", "compelling_arcs", "tight_scene_structure"]:
-            data = result.get(pillar, {})  # type: ignore[assignment]
-            md += f"**{pillar.replace('_', ' ').title()} ({data.get('score', 0)}/100):**\n"
+        for pillar in PILLAR_KEYS:
+            data = _pillar_data(result, pillar)
+            md += f"**{_format_pillar_label(pillar)} ({data.get('score', 0)}/100):**\n"
             md += f"> *Analysis:* {data.get('analysis', '')}\n>\n"
             md += f"> *Actionable Tip:* {data.get('actionable_advice', '')}\n\n"
         md += "---\n"
@@ -124,8 +132,13 @@ if st.button("Analyze Manuscript"):
 
         # State trackers for the full manuscript
         all_results: list[CritiqueResult] = []
-        pacing_data: list[int] = []
-        avg_scores: AvgScores = {
+        pacing_data: dict[str, list[int]] = {
+            "agency": [],
+            "conflict_and_stakes": [],
+            "compelling_arcs": [],
+            "tight_scene_structure": [],
+        }
+        avg_scores: dict[str, int] = {
             "agency": 0,
             "conflict_and_stakes": 0,
             "compelling_arcs": 0,
@@ -133,6 +146,7 @@ if st.button("Analyze Manuscript"):
         }
         all_characters: dict[str, CharacterData] = {}  # Tracks entities across chunks
         prose_snipers: list[SniperHit] = []  # Tracks every flagged sentence across chunks
+        section_scores: list[float] = []  # Tracks each section's overall average, to find the weakest
 
         progress_bar = st.progress(0, text="Initializing Editor...")
 
@@ -145,12 +159,17 @@ if st.button("Analyze Manuscript"):
                 result: CritiqueResult = analyze_chunk(chunk, persona=selected_persona)
                 all_results.append(result)
 
-                # Store pacing data
-                pacing_data.append(result.get("conflict_and_stakes", {}).get("score", 0))  # type: ignore[assignment]
+                # Store pacing data for every pillar
+                for pillar in pacing_data.keys():
+                    pacing_data[pillar].append(_pillar_data(result, pillar).get("score", 0))
+
+                # --- TRACK WEAKEST SECTION ---
+                section_avg = sum(_pillar_data(result, p).get("score", 0) for p in PILLAR_KEYS) / 4
+                section_scores.append(section_avg)
 
                 # Accumulate scores
                 for pillar in avg_scores.keys():
-                    avg_scores[pillar] += result.get(pillar, {}).get("score", 0)  # type: ignore[literal-required,assignment]
+                    avg_scores[pillar] += _pillar_data(result, pillar).get("score", 0)
 
                 # --- COLLECT PROSE SNIPER GALLERY ---
                 sniper_hit = result.get("prose_sniper", {})  # type: ignore[assignment]
@@ -190,18 +209,36 @@ if st.button("Analyze Manuscript"):
 
             # Calculate final averages
             for pillar in avg_scores.keys():
-                avg_scores[pillar] = int(avg_scores[pillar] / len(chunks))  # pyright: ignore[reportUnknownArgumentType]
+                avg_scores[pillar] = int(avg_scores[pillar] / len(chunks))
 
             _ = st.success("Grading Complete!")
 
             # --- TENSION LINE GRAPH ---
-            if len(pacing_data) > 1:
-                _ = st.subheader("📈 Manuscript Tension Pacing (Conflict & Stakes)")
-                _ = st.line_chart(pacing_data)
+            if len(pacing_data["agency"]) > 1:
+                _ = st.subheader("📈 Manuscript Pacing")
+                pillar_choice: str = st.selectbox(
+                    "Chart which pillar?",
+                    PILLAR_KEYS,
+                    format_func=_format_pillar_label,
+                    index=1,  # defaults to Conflict & Stakes, matching old behavior
+                )
+                _ = st.line_chart(pacing_data[pillar_choice])
                 _ = st.caption(
                     "A healthy story usually features rising tension (peaks) followed by "
                     + "brief moments of resolution (valleys). Flat lines indicate pacing issues."
                 )
+
+                # --- PACING LULL DETECTION ---
+                lull_threshold = 50
+                lull_sections = [
+                    i + 1 for i, score in enumerate(pacing_data[pillar_choice]) if score < lull_threshold
+                ]
+                if lull_sections:
+                    section_list = ", ".join(str(s) for s in lull_sections)
+                    _ = st.warning(
+                        f"⚠️ **Pacing lull detected** in {_format_pillar_label(pillar_choice)}: "
+                        + f"Section(s) {section_list} scored below {lull_threshold}/100."
+                    )
 
             _ = st.header("Average Content Grades")
             col1, col2 = st.columns(2)
@@ -212,23 +249,23 @@ if st.button("Analyze Manuscript"):
                 _ = st.subheader("Agency & Conflict")
                 _ = st.write("**Character Agency (Avg)**")
                 _ = st.progress(avg_scores["agency"])
-                _ = st.success(f"**Tip from Final Scene:** {final_chunk.get('agency', {}).get('actionable_advice', '')}")
+                _ = st.success(f"**Tip from Final Scene:** {_pillar_data(final_chunk, 'agency').get('actionable_advice', '')}")
 
                 _ = st.write("---")
                 _ = st.write("**Conflict & Stakes (Avg)**")
                 _ = st.progress(avg_scores["conflict_and_stakes"])
-                _ = st.warning(f"**Tip from Final Scene:** {final_chunk.get('conflict_and_stakes', {}).get('actionable_advice', '')}")
+                _ = st.warning(f"**Tip from Final Scene:** {_pillar_data(final_chunk, 'conflict_and_stakes').get('actionable_advice', '')}")
 
             with col2:
                 _ = st.subheader("Structure & Arcs")
                 _ = st.write("**Compelling Arcs (Avg)**")
                 _ = st.progress(avg_scores["compelling_arcs"])
-                _ = st.info(f"**Tip from Final Scene:** {final_chunk.get('compelling_arcs', {}).get('actionable_advice', '')}")
+                _ = st.info(f"**Tip from Final Scene:** {_pillar_data(final_chunk, 'compelling_arcs').get('actionable_advice', '')}")
 
                 _ = st.write("---")
                 _ = st.write("**Tight Scene Structure (Avg)**")
                 _ = st.progress(avg_scores["tight_scene_structure"])
-                _ = st.success(f"**Tip from Final Scene:** {final_chunk.get('tight_scene_structure', {}).get('actionable_advice', '')}")
+                _ = st.success(f"**Tip from Final Scene:** {_pillar_data(final_chunk, 'tight_scene_structure').get('actionable_advice', '')}")
 
             # --- PROSE SNIPER GALLERY ---
             _ = st.write("---")
@@ -243,8 +280,27 @@ if st.button("Analyze Manuscript"):
             else:
                 _ = st.info("No major prose violations detected across the manuscript. Clean writing!")
 
+            # --- WEAKEST SECTION FINDER ---
+            _ = st.write("---")
+            _ = st.subheader("🔻 Weakest Section")
+
+            weakest_idx = section_scores.index(min(section_scores))
+            weakest_score = section_scores[weakest_idx]
+            weakest_result = all_results[weakest_idx]
+
+            _ = st.warning(
+                f"**Section {weakest_idx + 1}** scored lowest overall, averaging **{weakest_score:.0f}/100** across all four pillars."
+            )
+            for pillar in PILLAR_KEYS:
+                pillar_data = _pillar_data(weakest_result, pillar)
+                with st.expander(f"{_format_pillar_label(pillar)} ({pillar_data.get('score', 0)}/100)"):
+                    _ = st.write(f"**Analysis:** {pillar_data.get('analysis', '')}")
+                    _ = st.write(f"**Actionable Tip:** {pillar_data.get('actionable_advice', '')}")
+
             # --- DOWNLOAD REPORT ---
-            report_str = generate_markdown_report(avg_scores, all_results, pacing_data, all_characters, prose_snipers)
+            report_str = generate_markdown_report(
+                avg_scores, all_results, all_characters, prose_snipers, section_scores
+            )
             _ = st.download_button(
                 label="📥 Download Full Offline Report",
                 data=report_str,
