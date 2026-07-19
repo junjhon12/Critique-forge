@@ -108,13 +108,13 @@ def _extract_json(raw: str) -> str:
     return cleaned.strip()
 
 
-def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic", max_retries: int = 2) -> CritiqueResult:
+def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic", custom_system_prompt: str | None = None, max_retries: int = 2) -> CritiqueResult:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY is missing from environment variables.")
 
     client = Groq(api_key=api_key)
-    full_system_prompt = PERSONAS.get(persona, PERSONAS["Ruthless Critic"]) + "\n\n" + JSON_SCHEMA
+    full_system_prompt = (custom_system_prompt or PERSONAS.get(persona, PERSONAS["Ruthless Critic"])) + "\n\n" + JSON_SCHEMA
 
     messages: list[dict[str, str]] = [
         {"role": "system", "content": full_system_prompt},

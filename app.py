@@ -102,8 +102,14 @@ st.set_page_config(page_title="Critique-Forge AI", layout="wide")
 _ = st.sidebar.title("⚙️ Editor Settings")
 selected_persona: str = st.sidebar.radio(
     "Choose your editor's tone:",
-    ["Ruthless Critic", "Encouraging Mentor", "Grammar & Prose Stickler"]
+    ["Ruthless Critic", "Encouraging Mentor", "Grammar & Prose Stickler", "Custom"]
 )
+
+custom_prompt: str | None = None
+if selected_persona == "Custom":
+    custom_prompt = st.sidebar.text_area("Write your own persona prompt:", height=200).strip() or None
+    if custom_prompt is None:
+        st.sidebar.warning("Enter a persona prompt to enable analysis.")
 
 # --- MAIN UI ---
 _ = st.title("Critique-Forge AI: Developmental Editor")
@@ -116,6 +122,8 @@ uploaded_file: UploadedFile | None = st.file_uploader(
 text_input: str = st.text_area("Or paste the content here:", height=200)
 
 if st.button("Analyze Manuscript"):
+    if selected_persona == "Custom" and custom_prompt is None:
+        st.stop()
     raw_text: str = ""
     if uploaded_file is not None:
         try:
@@ -156,7 +164,7 @@ if st.button("Analyze Manuscript"):
                 _ = progress_bar.progress(
                     (i) / len(chunks), text=f"Analyzing Section {i+1} of {len(chunks)}..."
                 )
-                result: CritiqueResult = analyze_chunk(chunk, persona=selected_persona)
+                result: CritiqueResult = analyze_chunk(chunk, persona=selected_persona, custom_system_prompt=custom_prompt)
                 all_results.append(result)
 
                 # Store pacing data for every pillar
