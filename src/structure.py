@@ -57,6 +57,7 @@ class PlatformPacingFlag(TypedDict):
     min_words: int
     max_words: int
     flag: str
+    severity: str | None
 
 
 PLATFORM_WORD_COUNT_NORMS: dict[str, tuple[int, int]] = {
@@ -66,6 +67,33 @@ PLATFORM_WORD_COUNT_NORMS: dict[str, tuple[int, int]] = {
     "Wattpad": (500, 1500),
     "Scribble Hub": (1500, 2500),
     "Custom": (0, 0),
+}
+
+DEFAULT_SEVERITY_THRESHOLD_PCT = 25.0
+
+PLATFORM_PACING_RATIONALE: dict[str, str] = {
+    "RoyalRoad": (
+        "RoyalRoad's Rising Stars and Trending algorithms reward a steady cadence of "
+        "similarly-sized chapters; chapters that are much shorter or longer than the "
+        "2000-3000 word norm disrupt read-through rate and can knock a title out of "
+        "trending placement."
+    ),
+    "Webnovel": (
+        "Webnovel splits chapters into ad-supported scroll segments, so payouts are tied "
+        "to how many segments a chapter fills. Chapters well under 1000-2000 words leave "
+        "ad-impression revenue on the table, while much longer chapters don't proportionally "
+        "increase pay and can hurt daily-update consistency."
+    ),
+    "Wattpad": (
+        "Wattpad's algorithm favors frequent, bite-sized updates that keep readers coming back "
+        "daily; chapters far outside the 500-1500 word range break the fast-read pacing the "
+        "platform's discovery feed is tuned for."
+    ),
+    "Scribble Hub": (
+        "Scribble Hub readers and its trending/favorites ranking respond to consistent chapter "
+        "sizing; chapters far outside 1500-2500 words stand out as pacing outliers and can "
+        "suppress a series' visibility on genre listing pages."
+    ),
 }
 
 
@@ -277,18 +305,29 @@ def check_platform_pacing_conformance(
     scenes: list[SceneInfo],
     min_words: int,
     max_words: int,
+    severity_threshold_pct: float = DEFAULT_SEVERITY_THRESHOLD_PCT,
 ) -> list[PlatformPacingFlag]:
-    """Flag scenes/chapters outside a fixed platform word-count range (e.g. RoyalRoad 2000-3000)."""
+    """Flag scenes/chapters outside a fixed platform word-count range (e.g. RoyalRoad 2000-3000).
+
+    Out-of-range chapters are also tagged with a severity ("minor" vs. "major") based on how far
+    they fall outside the range, since a chapter that's 25%+ off-target is a much bigger hit to a
+    platform's revenue/ranking algorithm than one that's just barely outside the boundary.
+    """
     if not scenes or min_words <= 0 or max_words <= 0:
         return []
 
     flags: list[PlatformPacingFlag] = []
     for scene in scenes:
         word_count = scene["word_count"]
+        severity: str | None = None
         if word_count < min_words:
             flag = "under"
+            deviation_pct = (min_words - word_count) / min_words * 100
+            severity = "major" if deviation_pct >= severity_threshold_pct else "minor"
         elif word_count > max_words:
             flag = "over"
+            deviation_pct = (word_count - max_words) / max_words * 100
+            severity = "major" if deviation_pct >= severity_threshold_pct else "minor"
         else:
             flag = "ok"
         flags.append({
@@ -297,6 +336,7 @@ def check_platform_pacing_conformance(
             "min_words": min_words,
             "max_words": max_words,
             "flag": flag,
+            "severity": severity,
         })
     return flags
 

@@ -24,6 +24,7 @@ selected_structure_template: str = "None / General"
 platform_min_words: int = 0
 platform_max_words: int = 0
 manuscript_format: str = "Web Novel"
+selected_platform: str = "None"
 
 if analysis_mode == "Full Manuscript":
     manuscript_format = st.sidebar.radio(
@@ -49,7 +50,7 @@ if analysis_mode == "Full Manuscript":
     )
 
     if manuscript_format == "Web Novel":
-        selected_platform: str = st.sidebar.selectbox(
+        selected_platform = st.sidebar.selectbox(
             "Platform word-count target (optional):", list(PLATFORM_WORD_COUNT_NORMS.keys())
         )
         if selected_platform == "Custom":
@@ -70,5 +71,5 @@ elif analysis_mode == "Read Like an Agent (First Page)":
 else:
     render_full_manuscript_mode(
         manuscript_name, selected_persona, custom_prompt, selected_genre, selected_structure_template,
-        platform_min_words, platform_max_words, manuscript_format,
+        platform_min_words, platform_max_words, manuscript_format, selected_platform,
     )

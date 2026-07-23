@@ -18,6 +18,7 @@ from src.structure import (
     detect_scenes, map_beats_to_scenes, analyze_pacing_weight,
     analyze_chapter_length_consistency, check_platform_pacing_conformance,
     SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag,
+    PLATFORM_PACING_RATIONALE,
 )
 from src.chunker import user_text
 from src.file_io import extract_text_from_file, extract_text_from_files
@@ -169,6 +170,7 @@ def render_full_manuscript_mode(
     platform_min_words: int = 0,
     platform_max_words: int = 0,
     manuscript_format: str = "Web Novel",
+    platform_name: str = "None",
 ) -> None:
     _ = st.markdown("Upload your manuscript to analyze its structural integrity.")
 
@@ -579,7 +581,10 @@ def render_full_manuscript_mode(
                         _ = st.warning(f"Scene {c['scene_index'] + 1} is a length **{c['flag'].replace('_', ' ')}** ({c['pct_deviation']:+.0f}% vs. manuscript average).")
 
                     if platform_pacing_flags:
-                        _ = st.write("**Platform Word-Count Conformance**")
+                        _ = st.write("**Platform Word-Count Conformance (Revenue/Ranking Impact)**")
+                        rationale = PLATFORM_PACING_RATIONALE.get(platform_name)
+                        if rationale:
+                            _ = st.caption(rationale)
                         platform_issues = [p for p in platform_pacing_flags if p["flag"] != "ok"]
                         _ = st.dataframe(
                             [
@@ -588,15 +593,22 @@ def render_full_manuscript_mode(
                                     "Words": p["word_count"],
                                     "Target Range": f"{p['min_words']}-{p['max_words']}",
                                     "Flag": p["flag"],
+                                    "Severity": p["severity"] or "-",
                                 }
                                 for p in platform_pacing_flags
                             ],
                             use_container_width=True,
                         )
                         for p in platform_issues:
+                            impact = (
+                                "significantly hurts revenue/ranking"
+                                if p["severity"] == "major"
+                                else "may slightly hurt revenue/ranking"
+                            )
                             _ = st.warning(
                                 f"Scene {p['scene_index'] + 1} is **{p['flag']}** the platform's "
-                                f"{p['min_words']}-{p['max_words']} word target ({p['word_count']} words)."
+                                f"{p['min_words']}-{p['max_words']} word target ({p['word_count']} words) "
+                                f"— {impact} ({p['severity']} deviation)."
                             )
 
                     if cliffhanger_results:
@@ -782,6 +794,7 @@ def render_full_manuscript_mode(
                     scenes, beat_matches, pacing_flags, chapter_length_flags,
                     platform_pacing_flags, readiness_checklist,
                     story_bible, consistency_flags,
+                    platform_name=platform_name,
                 )
                 _ = st.download_button(
                     label="📥 Download Full Offline Report",

@@ -1,7 +1,10 @@
 from typing import TypedDict, cast
 
 from src.ai_client import CritiqueResult, CharacterData, PillarData, HookCritiqueResult, QueryLetterResult, CliffhangerResult
-from src.structure import SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag
+from src.structure import (
+    SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag,
+    PLATFORM_PACING_RATIONALE,
+)
 from src.style_audit import PovTenseFlag
 from src.consistency import StoryBibleEntry, ConsistencyFlag
 
@@ -80,6 +83,7 @@ def generate_markdown_report(
     readiness_checklist: list[ChapterReadinessCheck] | None = None,
     story_bible: dict[str, StoryBibleEntry] | None = None,
     consistency_flags: list[ConsistencyFlag] | None = None,
+    platform_name: str = "None",
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -158,11 +162,15 @@ def generate_markdown_report(
     # --- PLATFORM PACING CONFORMANCE ---
     platform_issues = [p for p in (platform_pacing_flags or []) if p["flag"] != "ok"]
     if platform_issues:
-        md += "---\n## 📏 Platform Word-Count Conformance\n\n"
+        md += "---\n## 📏 Platform Word-Count Conformance (Revenue/Ranking Impact)\n\n"
+        rationale = PLATFORM_PACING_RATIONALE.get(platform_name)
+        if rationale:
+            md += f"*{rationale}*\n\n"
         for p in platform_issues:
             md += (
                 f"- Scene {p['scene_index'] + 1} ({p['word_count']} words): "
-                f"{p['flag']} the {p['min_words']}-{p['max_words']} word target range\n"
+                f"{p['flag']} the {p['min_words']}-{p['max_words']} word target range "
+                f"({p['severity']} deviation)\n"
             )
         md += "\n"
 
