@@ -4,8 +4,8 @@ import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from src.ai_client import (
-    analyze_chunk, analyze_hook, analyze_query_letter,
-    CritiqueResult, CharacterData, HookCritiqueResult, QueryLetterResult,
+    analyze_chunk, analyze_hook, analyze_query_letter, analyze_cliffhanger,
+    CritiqueResult, CharacterData, HookCritiqueResult, QueryLetterResult, CliffhangerResult,
 )
 from src.cache import _cache_key, load_cache, save_cache
 from src.history import manuscript_id as _manuscript_id, load_history, append_history
@@ -13,14 +13,16 @@ from src.diff import render_diff_html
 from src.style_audit import audit_filter_words, detect_pov_tense, PovTenseFlag
 from src.structure import (
     detect_scenes, map_beats_to_scenes, analyze_pacing_weight,
-    analyze_chapter_length_consistency, SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag,
+    analyze_chapter_length_consistency, check_platform_pacing_conformance,
+    SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag,
 )
 from src.chunker import user_text
-from src.file_io import extract_text_from_file
+from src.file_io import extract_text_from_file, extract_text_from_files
 from src.reports import (
     PILLAR_KEYS, SniperHit, pillar_data, format_pillar_label,
     generate_markdown_report, generate_checklist_report,
     generate_hook_report, generate_query_letter_report,
+    ChapterReadinessCheck, build_readiness_checklist,
 )
 
 
@@ -161,18 +163,44 @@ def render_full_manuscript_mode(
     custom_prompt: str,
     selected_genre: str,
     selected_structure_template: str,
+    platform_min_words: int = 0,
+    platform_max_words: int = 0,
 ) -> None:
     _ = st.markdown("Upload your manuscript to analyze its structural integrity.")
 
-    # Accept pdf and docx alongside plain text
-    uploaded_file: UploadedFile | None = st.file_uploader(
-        "Import document here", type=["txt", "md", "pdf", "docx"]
+    upload_mode: str = st.radio(
+        "Input mode:",
+        ["Paste / single file", "Multiple chapter files"],
+        horizontal=True,
     )
-    text_input: str = st.text_area("Or paste the content here:", height=200)
+
+    uploaded_file: UploadedFile | None = None
+    uploaded_chapter_files: list[UploadedFile] = []
+    text_input: str = ""
+
+    if upload_mode == "Multiple chapter files":
+        uploaded_chapter_files = st.file_uploader(
+            "Import chapter files here (one file per chapter, in reading order)",
+            type=["txt", "md", "pdf", "docx"],
+            accept_multiple_files=True,
+        ) or []
+    else:
+        uploaded_file = st.file_uploader(
+            "Import document here", type=["txt", "md", "pdf", "docx"]
+        )
+        text_input = st.text_area("Or paste the content here:", height=200)
 
     if st.button("Analyze Manuscript"):
         raw_text: str = ""
-        if uploaded_file is not None:
+        chapter_files: list[tuple[str, str]] = []
+
+        if uploaded_chapter_files:
+            try:
+                chapter_files = extract_text_from_files(uploaded_chapter_files)
+                raw_text = "\n\n".join(text for _name, text in chapter_files)
+            except Exception as e:
+                _ = st.error(f"Error reading chapter files: {e}")
+        elif uploaded_file is not None:
             try:
                 raw_text = extract_text_from_file(uploaded_file)
             except Exception as e:
@@ -190,13 +218,36 @@ def render_full_manuscript_mode(
             pov_tense_flags: list[PovTenseFlag] = detect_pov_tense(chunks)
 
             # --- STRUCTURAL/OUTLINE-LEVEL ANALYSIS (no LLM call, runs on every analysis) ---
-            scenes: list[SceneInfo] = detect_scenes(raw_text, chunks)
+            if chapter_files:
+                # Each uploaded file is its own chapter; skip heading-regex detection.
+                scenes = []
+                cursor = 0
+                for i, (name, text) in enumerate(chapter_files):
+                    word_count = len(text.split())
+                    scenes.append({
+                        "index": i,
+                        "heading": name,
+                        "start_word": cursor,
+                        "word_count": word_count,
+                        "pct_start": 0.0,
+                        "pct_end": 0.0,
+                    })
+                    cursor += word_count
+                total_words = cursor or 1
+                for s in scenes:
+                    s["pct_start"] = s["start_word"] / total_words * 100
+                    s["pct_end"] = (s["start_word"] + s["word_count"]) / total_words * 100
+            else:
+                scenes: list[SceneInfo] = detect_scenes(raw_text, chunks)
             beat_matches: list[BeatMatch] = map_beats_to_scenes(scenes, selected_structure_template)
             pacing_flags: list[PacingFlag] = analyze_pacing_weight(
                 scenes,
                 selected_structure_template if selected_structure_template != "None / General" else None,
             )
             chapter_length_flags: list[ChapterLengthFlag] = analyze_chapter_length_consistency(scenes)
+            platform_pacing_flags: list[PlatformPacingFlag] = check_platform_pacing_conformance(
+                scenes, platform_min_words, platform_max_words,
+            )
 
             # State trackers for the full manuscript
             all_results: list[CritiqueResult] = []
@@ -275,6 +326,31 @@ def render_full_manuscript_mode(
                                 # Add new character
                                 all_characters[name] = char
 
+                # --- CLIFFHANGER / CHAPTER-ENDING HOOK SCORING (per scene, LLM) ---
+                cliffhanger_results: dict[int, CliffhangerResult] = {}
+                if len(scenes) >= 2:
+                    words = raw_text.split()
+                    for scene in scenes:
+                        _ = progress_bar.progress(
+                            0.9, text=f"Scoring chapter ending {scene['index'] + 1} of {len(scenes)}..."
+                        )
+                        end_word = scene["start_word"] + scene["word_count"]
+                        ending_text = " ".join(words[max(scene["start_word"], end_word - 250):end_word])
+                        if not ending_text.strip():
+                            continue
+                        cliff_key = _cache_key(ending_text, "Cliffhanger", selected_genre)
+                        if cliff_key in cache:
+                            cliff_result: CliffhangerResult = cache[cliff_key]
+                        else:
+                            cliff_result = analyze_cliffhanger(ending_text, genre=selected_genre)
+                            cache[cliff_key] = cliff_result
+                            save_cache(cache)
+                        cliffhanger_results[scene["index"]] = cliff_result
+
+                readiness_checklist: list[ChapterReadinessCheck] = build_readiness_checklist(
+                    scenes, platform_pacing_flags, cliffhanger_results,
+                )
+
                 _ = progress_bar.progress(1.0, text="Analysis Complete!")
 
                 # --- RENDER SIDEBAR CODEX ---
@@ -310,6 +386,9 @@ def render_full_manuscript_mode(
                 st.session_state["last_custom_prompt"] = custom_prompt
                 st.session_state["last_genre"] = selected_genre
                 st.session_state["last_scenes"] = scenes
+                st.session_state["last_platform_pacing_flags"] = platform_pacing_flags
+                st.session_state["last_cliffhanger_results"] = cliffhanger_results
+                st.session_state["last_readiness_checklist"] = readiness_checklist
 
                 # --- TENSION LINE GRAPH ---
                 if len(pacing_data["agency"]) > 1:
@@ -479,6 +558,62 @@ def render_full_manuscript_mode(
                     for c in length_issues:
                         _ = st.warning(f"Scene {c['scene_index'] + 1} is a length **{c['flag'].replace('_', ' ')}** ({c['pct_deviation']:+.0f}% vs. manuscript average).")
 
+                    if platform_pacing_flags:
+                        _ = st.write("**Platform Word-Count Conformance**")
+                        platform_issues = [p for p in platform_pacing_flags if p["flag"] != "ok"]
+                        _ = st.dataframe(
+                            [
+                                {
+                                    "Scene": p["scene_index"] + 1,
+                                    "Words": p["word_count"],
+                                    "Target Range": f"{p['min_words']}-{p['max_words']}",
+                                    "Flag": p["flag"],
+                                }
+                                for p in platform_pacing_flags
+                            ],
+                            use_container_width=True,
+                        )
+                        for p in platform_issues:
+                            _ = st.warning(
+                                f"Scene {p['scene_index'] + 1} is **{p['flag']}** the platform's "
+                                f"{p['min_words']}-{p['max_words']} word target ({p['word_count']} words)."
+                            )
+
+                    if cliffhanger_results:
+                        _ = st.write("**Chapter-Ending Cliffhanger Strength**")
+                        _ = st.dataframe(
+                            [
+                                {
+                                    "Scene": idx + 1,
+                                    "Cliffhanger Score": r["cliffhanger_strength"].get("score", 0),
+                                    "Would Readers Continue?": "Yes" if r.get("would_readers_continue") else "No",
+                                }
+                                for idx, r in sorted(cliffhanger_results.items())
+                            ],
+                            use_container_width=True,
+                        )
+                        for idx, r in sorted(cliffhanger_results.items()):
+                            if not r.get("would_readers_continue"):
+                                _ = st.warning(
+                                    f"Scene {idx + 1} ending scored {r['cliffhanger_strength'].get('score', 0)}/100: "
+                                    f"{r['cliffhanger_strength'].get('actionable_advice', '')}"
+                                )
+
+                    if readiness_checklist:
+                        _ = st.write("**Release-Readiness Checklist**")
+                        _ = st.dataframe(
+                            [
+                                {
+                                    "Chapter": c["heading"] or f"Scene {c['scene_index'] + 1}",
+                                    "Word Count OK": "✅" if c["word_count_ok"] else "❌",
+                                    "Strong Cliffhanger": "✅" if c["has_strong_cliffhanger"] else "❌",
+                                    "Ready to Post": "✅" if c["overall_ready"] else "❌",
+                                }
+                                for c in readiness_checklist
+                            ],
+                            use_container_width=True,
+                        )
+
                 # --- WEAKEST SECTION FINDER ---
                 _ = st.write("---")
                 _ = st.subheader("🔻 Weakest Section")
@@ -501,6 +636,7 @@ def render_full_manuscript_mode(
                     avg_scores, all_results, all_characters, prose_snipers, section_scores,
                     filter_word_counts, pov_tense_flags,
                     scenes, beat_matches, pacing_flags, chapter_length_flags,
+                    platform_pacing_flags, readiness_checklist,
                 )
                 _ = st.download_button(
                     label="📥 Download Full Offline Report",
@@ -509,7 +645,7 @@ def render_full_manuscript_mode(
                     mime="text/markdown"
                 )
 
-                checklist_str = generate_checklist_report(all_results, scenes)
+                checklist_str = generate_checklist_report(all_results, scenes, readiness_checklist)
                 _ = st.download_button(
                     label="✅ Download Actionable Checklist",
                     data=checklist_str,

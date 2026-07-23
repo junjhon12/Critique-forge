@@ -34,6 +34,11 @@ class HookCritiqueResult(TypedDict):
     rejection_reasons: list[str]
 
 
+class CliffhangerResult(TypedDict):
+    cliffhanger_strength: PillarData
+    would_readers_continue: bool
+
+
 class QueryLetterResult(TypedDict):
     hook_strength: PillarData
     genre_clarity: PillarData
@@ -154,6 +159,24 @@ Output format must exactly match this JSON schema:
   "rejection_reasons": []
 }"""
 
+CLIFFHANGER_SYSTEM_PROMPT = """You are a serialized-fiction editor evaluating chapter ENDINGS for a web novel/serial (RoyalRoad, Webnovel, Scribble Hub, Wattpad-style chapter-a-day publishing). You are reading ONLY the final passage of a chapter, and your only question is: does this ending create enough pull that a reader would tap "next chapter" or come back tomorrow? You are blunt about flat, resolved, or inconclusive endings that give a reader no reason to keep reading right now."""
+
+CLIFFHANGER_JSON_SCHEMA = """
+You must evaluate the provided chapter ending and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide a "cliffhanger_strength" object containing:
+1. "score": An integer from 0 to 100 for how strongly this ending pulls a reader into the next chapter.
+2. "analysis": A 2-3 sentence tear-down of what is or isn't creating pull in this ending.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to strengthen the ending's hook.
+
+Provide "would_readers_continue": a boolean, true only if this ending is strong enough that most readers would immediately continue to the next chapter.
+
+Output format must exactly match this JSON schema:
+{
+  "cliffhanger_strength": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "would_readers_continue": false
+}"""
+
 QUERY_LETTER_SYSTEM_PROMPT = """You are a literary agent and acquisitions editor evaluating a QUERY LETTER or SYNOPSIS, not manuscript prose. You are judging the pitch itself: whether the opening hook of the letter grabs attention, whether the genre and comp-title positioning is clear and marketable, and whether the protagonist's goal and the stakes are legible within the first read. You do not evaluate prose style, scene structure, or line-level writing quality — only the query/synopsis as a sales pitch for the book."""
 
 QUERY_JSON_SCHEMA = """
@@ -220,6 +243,12 @@ def analyze_hook(text_chunk: str, genre: str = "None / General") -> HookCritique
     genre_guidance = GENRE_PRESETS.get(genre, "")
     full_system_prompt = PERSONAS["The Literary Agent"] + genre_guidance + "\n\n" + HOOK_JSON_SCHEMA
     return cast(HookCritiqueResult, _call_groq(full_system_prompt, text_chunk))
+
+
+def analyze_cliffhanger(chapter_ending_text: str, genre: str = "None / General") -> CliffhangerResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = CLIFFHANGER_SYSTEM_PROMPT + genre_guidance + "\n\n" + CLIFFHANGER_JSON_SCHEMA
+    return cast(CliffhangerResult, _call_groq(full_system_prompt, chapter_ending_text))
 
 
 def analyze_query_letter(text: str) -> QueryLetterResult:

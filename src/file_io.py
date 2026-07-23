@@ -21,3 +21,10 @@ def extract_text_from_file(uploaded_file: UploadedFile) -> str:
     else:
         # Fallback for plain text like .txt or .md
         return uploaded_file.getvalue().decode("utf-8")
+
+
+def extract_text_from_files(uploaded_files: list[UploadedFile]) -> list[tuple[str, str]]:
+    """Extracts text from multiple uploaded chapter files, preserving upload order.
+
+    Returns a list of (filename, text) pairs."""
+    return [(cast(str, f.name), extract_text_from_file(f)) for f in uploaded_files]

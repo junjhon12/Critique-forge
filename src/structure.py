@@ -51,6 +51,24 @@ class ChapterLengthFlag(TypedDict):
     flag: str
 
 
+class PlatformPacingFlag(TypedDict):
+    scene_index: int
+    word_count: int
+    min_words: int
+    max_words: int
+    flag: str
+
+
+PLATFORM_WORD_COUNT_NORMS: dict[str, tuple[int, int]] = {
+    "None": (0, 0),
+    "RoyalRoad": (2000, 3000),
+    "Webnovel": (1000, 2000),
+    "Wattpad": (500, 1500),
+    "Scribble Hub": (1500, 2500),
+    "Custom": (0, 0),
+}
+
+
 STRUCTURE_TEMPLATES: dict[str, list[BeatDefinition]] = {
     "None / General": [],
     "Three-Act Structure": [
@@ -252,6 +270,34 @@ def analyze_pacing_weight(
                 "deviation": actual_weight - expected_weight,
                 "flag": flag,
             })
+    return flags
+
+
+def check_platform_pacing_conformance(
+    scenes: list[SceneInfo],
+    min_words: int,
+    max_words: int,
+) -> list[PlatformPacingFlag]:
+    """Flag scenes/chapters outside a fixed platform word-count range (e.g. RoyalRoad 2000-3000)."""
+    if not scenes or min_words <= 0 or max_words <= 0:
+        return []
+
+    flags: list[PlatformPacingFlag] = []
+    for scene in scenes:
+        word_count = scene["word_count"]
+        if word_count < min_words:
+            flag = "under"
+        elif word_count > max_words:
+            flag = "over"
+        else:
+            flag = "ok"
+        flags.append({
+            "scene_index": scene["index"],
+            "word_count": word_count,
+            "min_words": min_words,
+            "max_words": max_words,
+            "flag": flag,
+        })
     return flags
 
 

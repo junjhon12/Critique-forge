@@ -1,7 +1,7 @@
 from typing import TypedDict, cast
 
-from src.ai_client import CritiqueResult, CharacterData, PillarData, HookCritiqueResult, QueryLetterResult
-from src.structure import SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag
+from src.ai_client import CritiqueResult, CharacterData, PillarData, HookCritiqueResult, QueryLetterResult, CliffhangerResult
+from src.structure import SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag
 from src.style_audit import PovTenseFlag
 
 PILLAR_KEYS: list[str] = ["agency", "conflict_and_stakes", "compelling_arcs", "tight_scene_structure"]
@@ -11,6 +11,47 @@ class SniperHit(TypedDict):
     section: int
     bad_quote: str
     rewritten_example: str
+
+
+class ChapterReadinessCheck(TypedDict):
+    scene_index: int
+    heading: str | None
+    word_count_ok: bool
+    has_strong_cliffhanger: bool
+    cliffhanger_score: int | None
+    overall_ready: bool
+
+
+def build_readiness_checklist(
+    scenes: list[SceneInfo],
+    platform_pacing_flags: list[PlatformPacingFlag] | None,
+    cliffhanger_results: dict[int, CliffhangerResult] | None,
+) -> list[ChapterReadinessCheck]:
+    """Aggregates platform-pacing and cliffhanger results into a per-chapter release-readiness checklist."""
+    pacing_by_index = {f["scene_index"]: f for f in (platform_pacing_flags or [])}
+    cliffhanger_results = cliffhanger_results or {}
+
+    checklist: list[ChapterReadinessCheck] = []
+    for scene in scenes:
+        idx = scene["index"]
+        pacing_flag = pacing_by_index.get(idx)
+        word_count_ok = pacing_flag is None or pacing_flag["flag"] == "ok"
+
+        cliff_result = cliffhanger_results.get(idx)
+        cliff_score = cliff_result["cliffhanger_strength"].get("score") if cliff_result else None
+        has_strong_cliffhanger = bool(cliff_result and cliff_result.get("would_readers_continue"))
+
+        overall_ready = word_count_ok and (cliff_result is None or has_strong_cliffhanger)
+
+        checklist.append({
+            "scene_index": idx,
+            "heading": scene.get("heading"),
+            "word_count_ok": word_count_ok,
+            "has_strong_cliffhanger": has_strong_cliffhanger,
+            "cliffhanger_score": cliff_score,
+            "overall_ready": overall_ready,
+        })
+    return checklist
 
 
 def pillar_data(result: CritiqueResult, pillar: str) -> PillarData:
@@ -34,6 +75,8 @@ def generate_markdown_report(
     beat_matches: list[BeatMatch] | None = None,
     pacing_flags: list[PacingFlag] | None = None,
     chapter_length_flags: list[ChapterLengthFlag] | None = None,
+    platform_pacing_flags: list[PlatformPacingFlag] | None = None,
+    readiness_checklist: list[ChapterReadinessCheck] | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -109,6 +152,34 @@ def generate_markdown_report(
                     md += f"- Scene {c['scene_index'] + 1} ({c['word_count']} words, avg {c['mean_word_count']:.0f}): {c['flag'].replace('_', ' ')}\n"
                 md += "\n"
 
+    # --- PLATFORM PACING CONFORMANCE ---
+    platform_issues = [p for p in (platform_pacing_flags or []) if p["flag"] != "ok"]
+    if platform_issues:
+        md += "---\n## 📏 Platform Word-Count Conformance\n\n"
+        for p in platform_issues:
+            md += (
+                f"- Scene {p['scene_index'] + 1} ({p['word_count']} words): "
+                f"{p['flag']} the {p['min_words']}-{p['max_words']} word target range\n"
+            )
+        md += "\n"
+
+    # --- RELEASE-READINESS CHECKLIST ---
+    if readiness_checklist:
+        md += "---\n## ✅ Release-Readiness Checklist\n\n"
+        for c in readiness_checklist:
+            label = c["heading"] or f"Scene {c['scene_index'] + 1}"
+            status = "✅ Ready" if c["overall_ready"] else "⚠️ Not ready"
+            md += f"- **{label}:** {status}"
+            details: list[str] = []
+            if not c["word_count_ok"]:
+                details.append("word count out of platform range")
+            if c["cliffhanger_score"] is not None and not c["has_strong_cliffhanger"]:
+                details.append(f"weak cliffhanger ({c['cliffhanger_score']}/100)")
+            if details:
+                md += f" ({'; '.join(details)})"
+            md += "\n"
+        md += "\n"
+
     md += "---\n## Detailed Chunk Breakdown\n\n"
 
     for i, result in enumerate(all_results):
@@ -125,14 +196,20 @@ def generate_markdown_report(
 def generate_checklist_report(
     all_results: list[CritiqueResult],
     scenes: list[SceneInfo] | None = None,
+    readiness_checklist: list[ChapterReadinessCheck] | None = None,
 ) -> str:
     """Generates a flat actionable-advice checklist, skipping scores and analysis."""
+    readiness_by_index = {c["scene_index"]: c for c in (readiness_checklist or [])}
     md = "# Critique-Forge Action Checklist\n\n"
     for i, result in enumerate(all_results):
         heading = None
         if scenes and i < len(scenes):
             heading = scenes[i].get("heading")
         md += f"## {heading if heading else f'Section {i + 1}'}\n"
+        readiness = readiness_by_index.get(i)
+        if readiness is not None:
+            status = "✅ Ready to post" if readiness["overall_ready"] else "⚠️ Not ready to post"
+            md += f"- {status}\n"
         for pillar in PILLAR_KEYS:
             advice = pillar_data(result, pillar).get("actionable_advice", "").strip()
             if advice:
