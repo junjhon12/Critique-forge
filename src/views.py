@@ -165,6 +165,7 @@ def render_full_manuscript_mode(
     selected_structure_template: str,
     platform_min_words: int = 0,
     platform_max_words: int = 0,
+    manuscript_format: str = "Web Novel",
 ) -> None:
     _ = st.markdown("Upload your manuscript to analyze its structural integrity.")
 
@@ -245,8 +246,10 @@ def render_full_manuscript_mode(
                 selected_structure_template if selected_structure_template != "None / General" else None,
             )
             chapter_length_flags: list[ChapterLengthFlag] = analyze_chapter_length_consistency(scenes)
-            platform_pacing_flags: list[PlatformPacingFlag] = check_platform_pacing_conformance(
-                scenes, platform_min_words, platform_max_words,
+            is_web_novel = manuscript_format == "Web Novel"
+            platform_pacing_flags: list[PlatformPacingFlag] = (
+                check_platform_pacing_conformance(scenes, platform_min_words, platform_max_words)
+                if is_web_novel else []
             )
 
             # State trackers for the full manuscript
@@ -326,9 +329,9 @@ def render_full_manuscript_mode(
                                 # Add new character
                                 all_characters[name] = char
 
-                # --- CLIFFHANGER / CHAPTER-ENDING HOOK SCORING (per scene, LLM) ---
+                # --- CLIFFHANGER / CHAPTER-ENDING HOOK SCORING (per scene, LLM; Web Novel only) ---
                 cliffhanger_results: dict[int, CliffhangerResult] = {}
-                if len(scenes) >= 2:
+                if is_web_novel and len(scenes) >= 2:
                     words = raw_text.split()
                     for scene in scenes:
                         _ = progress_bar.progress(
@@ -347,8 +350,9 @@ def render_full_manuscript_mode(
                             save_cache(cache)
                         cliffhanger_results[scene["index"]] = cliff_result
 
-                readiness_checklist: list[ChapterReadinessCheck] = build_readiness_checklist(
-                    scenes, platform_pacing_flags, cliffhanger_results,
+                readiness_checklist: list[ChapterReadinessCheck] = (
+                    build_readiness_checklist(scenes, platform_pacing_flags, cliffhanger_results)
+                    if is_web_novel else []
                 )
 
                 _ = progress_bar.progress(1.0, text="Analysis Complete!")
