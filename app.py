@@ -11,6 +11,11 @@ from src.cache import _cache_key, load_cache, save_cache
 from src.history import manuscript_id as _manuscript_id, load_history, append_history
 from src.diff import render_diff_html
 from src.style_audit import audit_filter_words, detect_pov_tense, PovTenseFlag
+from src.structure import (
+    detect_scenes, map_beats_to_scenes, analyze_pacing_weight,
+    analyze_chapter_length_consistency, STRUCTURE_TEMPLATES,
+    SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag,
+)
 
 _ = load_dotenv()
 
@@ -59,6 +64,10 @@ def generate_markdown_report(
     section_scores: list[float] | None = None,
     filter_word_counts: dict[str, int] | None = None,
     pov_tense_flags: list[PovTenseFlag] | None = None,
+    scenes: list[SceneInfo] | None = None,
+    beat_matches: list[BeatMatch] | None = None,
+    pacing_flags: list[PacingFlag] | None = None,
+    chapter_length_flags: list[ChapterLengthFlag] | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -111,6 +120,29 @@ def generate_markdown_report(
                 md += f"- Section {flag['chunk_index'] + 1}: {' and '.join(details)}\n"
             md += "\n"
 
+    # --- STRUCTURAL OVERLAY ---
+    if scenes and len(scenes) >= 2:
+        missing_beats = [b for b in (beat_matches or []) if b["matched_scene_index"] is None]
+        pacing_issues = [p for p in (pacing_flags or []) if p["flag"] != "ok"]
+        length_issues = [c for c in (chapter_length_flags or []) if c["flag"] != "ok"]
+        if missing_beats or pacing_issues or length_issues:
+            md += "---\n## 🧭 Structural Overlay\n\n"
+            if missing_beats:
+                md += "**Missing beats:**\n\n"
+                for beat in missing_beats:
+                    md += f"- \"{beat['beat_name']}\" expected around {beat['expected_pct']:.0f}% — no scene found nearby\n"
+                md += "\n"
+            if pacing_issues:
+                md += "**Pacing vs. narrative weight:**\n\n"
+                for p in pacing_issues:
+                    md += f"- Scene {p['scene_index'] + 1} ({p['word_count']} words): flagged as {p['flag'].replace('_', ' ')}\n"
+                md += "\n"
+            if length_issues:
+                md += "**Chapter-length outliers:**\n\n"
+                for c in length_issues:
+                    md += f"- Scene {c['scene_index'] + 1} ({c['word_count']} words, avg {c['mean_word_count']:.0f}): {c['flag'].replace('_', ' ')}\n"
+                md += "\n"
+
     md += "---\n## Detailed Chunk Breakdown\n\n"
 
     for i, result in enumerate(all_results):
@@ -141,6 +173,9 @@ if selected_persona == "Custom":
         _ = st.sidebar.warning("Enter a custom persona prompt to use it during analysis.")
 
 selected_genre: str = st.sidebar.selectbox("Genre / format:", list(GENRE_PRESETS.keys()))
+selected_structure_template: str = st.sidebar.selectbox(
+    "Structure template (optional):", list(STRUCTURE_TEMPLATES.keys())
+)
 
 # --- MAIN UI ---
 _ = st.title("Critique-Forge AI: Developmental Editor")
@@ -170,6 +205,15 @@ if st.button("Analyze Manuscript"):
         # --- LOCAL STYLE & CONSISTENCY AUDIT (no LLM call, runs on every analysis) ---
         filter_word_counts: dict[str, int] = audit_filter_words(raw_text)
         pov_tense_flags: list[PovTenseFlag] = detect_pov_tense(chunks)
+
+        # --- STRUCTURAL/OUTLINE-LEVEL ANALYSIS (no LLM call, runs on every analysis) ---
+        scenes: list[SceneInfo] = detect_scenes(raw_text, chunks)
+        beat_matches: list[BeatMatch] = map_beats_to_scenes(scenes, selected_structure_template)
+        pacing_flags: list[PacingFlag] = analyze_pacing_weight(
+            scenes,
+            selected_structure_template if selected_structure_template != "None / General" else None,
+        )
+        chapter_length_flags: list[ChapterLengthFlag] = analyze_chapter_length_consistency(scenes)
 
         # State trackers for the full manuscript
         all_results: list[CritiqueResult] = []
@@ -282,6 +326,7 @@ if st.button("Analyze Manuscript"):
             st.session_state["last_persona"] = selected_persona
             st.session_state["last_custom_prompt"] = custom_prompt
             st.session_state["last_genre"] = selected_genre
+            st.session_state["last_scenes"] = scenes
 
             # --- TENSION LINE GRAPH ---
             if len(pacing_data["agency"]) > 1:
@@ -377,6 +422,80 @@ if st.button("Analyze Manuscript"):
             if not filter_word_counts and not shift_flags:
                 _ = st.info("No notable filter-word overuse or POV/tense shifts detected.")
 
+            # --- STRUCTURAL OVERLAY (local, no LLM) ---
+            _ = st.write("---")
+            _ = st.subheader("🧭 Structural Overlay")
+
+            if len(scenes) < 2:
+                _ = st.info(
+                    "Manuscript too short or no scene/chapter breaks detected — "
+                    "structural analysis needs at least 2 scenes."
+                )
+            else:
+                if all(s["heading"] is None for s in scenes):
+                    _ = st.caption(
+                        "No chapter/scene headings or break markers detected — using "
+                        "token-based sections as pseudo-scenes for structural analysis."
+                    )
+
+                _ = st.write("**Beat Sheet**")
+                if selected_structure_template == "None / General":
+                    _ = st.info("Select a structure template in the sidebar to enable beat-sheet mapping.")
+                else:
+                    _ = st.dataframe(
+                        [
+                            {
+                                "Beat": b["beat_name"],
+                                "Expected %": f"{b['expected_pct']:.0f}%",
+                                "Matched Scene": (b["matched_scene_index"] + 1) if b["matched_scene_index"] is not None else "—",
+                            }
+                            for b in beat_matches
+                        ],
+                        use_container_width=True,
+                    )
+                    for b in beat_matches:
+                        if b["matched_scene_index"] is None:
+                            _ = st.warning(
+                                f"Missing beat: \"{b['beat_name']}\" expected around "
+                                f"{b['expected_pct']:.0f}% — no scene found nearby."
+                            )
+
+                _ = st.write("**Pacing vs. Narrative Weight**")
+                pacing_issues = [p for p in pacing_flags if p["flag"] != "ok"]
+                _ = st.dataframe(
+                    [
+                        {
+                            "Scene": p["scene_index"] + 1,
+                            "Words": p["word_count"],
+                            "Actual Weight": f"{p['actual_weight'] * 100:.1f}%",
+                            "Expected Weight": f"{p['expected_weight'] * 100:.1f}%",
+                            "Flag": p["flag"],
+                        }
+                        for p in pacing_flags
+                    ],
+                    use_container_width=True,
+                )
+                for p in pacing_issues:
+                    _ = st.warning(f"Scene {p['scene_index'] + 1} flagged as **{p['flag'].replace('_', ' ')}** relative to its expected narrative weight.")
+
+                _ = st.write("**Chapter-Length Consistency**")
+                length_issues = [c for c in chapter_length_flags if c["flag"] != "ok"]
+                _ = st.dataframe(
+                    [
+                        {
+                            "Scene": c["scene_index"] + 1,
+                            "Words": c["word_count"],
+                            "Manuscript Avg": f"{c['mean_word_count']:.0f}",
+                            "Deviation": f"{c['pct_deviation']:+.0f}%",
+                            "Flag": c["flag"],
+                        }
+                        for c in chapter_length_flags
+                    ],
+                    use_container_width=True,
+                )
+                for c in length_issues:
+                    _ = st.warning(f"Scene {c['scene_index'] + 1} is a length **{c['flag'].replace('_', ' ')}** ({c['pct_deviation']:+.0f}% vs. manuscript average).")
+
             # --- WEAKEST SECTION FINDER ---
             _ = st.write("---")
             _ = st.subheader("🔻 Weakest Section")
@@ -398,6 +517,7 @@ if st.button("Analyze Manuscript"):
             report_str = generate_markdown_report(
                 avg_scores, all_results, all_characters, prose_snipers, section_scores,
                 filter_word_counts, pov_tense_flags,
+                scenes, beat_matches, pacing_flags, chapter_length_flags,
             )
             _ = st.download_button(
                 label="📥 Download Full Offline Report",
