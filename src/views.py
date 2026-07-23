@@ -4,9 +4,10 @@ import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from src.ai_client import (
-    analyze_chunk, analyze_hook, analyze_query_letter, analyze_cliffhanger,
+    analyze_chunk, analyze_hook, analyze_query_letter, analyze_cliffhanger, extract_bible_entities,
     CritiqueResult, CharacterData, HookCritiqueResult, QueryLetterResult, CliffhangerResult,
 )
+from src.consistency import merge_entity, StoryBibleEntry, ConsistencyFlag
 from src.cache import _cache_key, load_cache, save_cache
 from src.history import manuscript_id as _manuscript_id, load_history, append_history
 from src.diff import render_diff_html
@@ -269,6 +270,8 @@ def render_full_manuscript_mode(
             all_characters: dict[str, CharacterData] = {}  # Tracks entities across chunks
             prose_snipers: list[SniperHit] = []  # Tracks every flagged sentence across chunks
             section_scores: list[float] = []  # Tracks each section's overall average, to find the weakest
+            story_bible: dict[str, StoryBibleEntry] = {}  # Running character/terminology bible across chunks
+            consistency_flags: list[ConsistencyFlag] = []  # Detected contradictions across chunks
 
             progress_bar = st.progress(0, text="Initializing Editor...")
             cache = load_cache()
@@ -328,6 +331,17 @@ def render_full_manuscript_mode(
                             else:
                                 # Add new character
                                 all_characters[name] = char
+
+                    # --- UPDATE STORY BIBLE / CONSISTENCY CHECK ---
+                    bible_key = _cache_key(chunk, "Story Bible", "")
+                    if bible_key in cache:
+                        bible_result = cache[bible_key]
+                    else:
+                        bible_result = extract_bible_entities(chunk)
+                        cache[bible_key] = bible_result
+                        save_cache(cache)
+                    for bible_entity in bible_result.get("entities", []):
+                        consistency_flags.extend(merge_entity(story_bible, bible_entity, i))
 
                 # --- CLIFFHANGER / CHAPTER-ENDING HOOK SCORING (per scene, LLM; Web Novel only) ---
                 cliffhanger_results: dict[int, CliffhangerResult] = {}
@@ -635,12 +649,40 @@ def render_full_manuscript_mode(
                         _ = st.write(f"**Analysis:** {pd.get('analysis', '')}")
                         _ = st.write(f"**Actionable Tip:** {pd.get('actionable_advice', '')}")
 
+                # --- STORY BIBLE & CONSISTENCY CHECK ---
+                _ = st.write("---")
+                _ = st.subheader("🗂️ Story Bible & Consistency Check")
+
+                if story_bible:
+                    _ = st.caption(f"{len(story_bible)} entit(y/ies) tracked across {len(chunks)} section(s).")
+                    for entry in story_bible.values():
+                        icon = "👤" if entry["entity_type"] == "character" else "📘"
+                        with st.expander(f"{icon} {entry['canonical_name']}"):
+                            if entry["aliases"]:
+                                _ = st.write(f"**Aliases:** {', '.join(sorted(entry['aliases']))}")
+                            for attr_name, sightings in entry["attributes"].items():
+                                _ = st.write(f"**{attr_name.replace('_', ' ').title()}:** {sightings[-1]['value']}")
+                else:
+                    _ = st.info("No characters or terminology detected.")
+
+                if consistency_flags:
+                    _ = st.write("**⚠️ Detected Contradictions**")
+                    for flag in consistency_flags:
+                        _ = st.error(
+                            f"**{flag['entity_name']}.{flag['attribute']}** changed from "
+                            f"\"{flag['previous_value']}\" (Section {flag['previous_chunk_index'] + 1}) to "
+                            f"\"{flag['new_value']}\" (Section {flag['chunk_index'] + 1})."
+                        )
+                else:
+                    _ = st.success(f"No contradictions detected across {len(chunks)} section(s).")
+
                 # --- DOWNLOAD REPORT ---
                 report_str = generate_markdown_report(
                     avg_scores, all_results, all_characters, prose_snipers, section_scores,
                     filter_word_counts, pov_tense_flags,
                     scenes, beat_matches, pacing_flags, chapter_length_flags,
                     platform_pacing_flags, readiness_checklist,
+                    story_bible, consistency_flags,
                 )
                 _ = st.download_button(
                     label="📥 Download Full Offline Report",

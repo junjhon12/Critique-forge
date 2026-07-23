@@ -3,6 +3,7 @@ from typing import TypedDict, cast
 from src.ai_client import CritiqueResult, CharacterData, PillarData, HookCritiqueResult, QueryLetterResult, CliffhangerResult
 from src.structure import SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag
 from src.style_audit import PovTenseFlag
+from src.consistency import StoryBibleEntry, ConsistencyFlag
 
 PILLAR_KEYS: list[str] = ["agency", "conflict_and_stakes", "compelling_arcs", "tight_scene_structure"]
 
@@ -77,6 +78,8 @@ def generate_markdown_report(
     chapter_length_flags: list[ChapterLengthFlag] | None = None,
     platform_pacing_flags: list[PlatformPacingFlag] | None = None,
     readiness_checklist: list[ChapterReadinessCheck] | None = None,
+    story_bible: dict[str, StoryBibleEntry] | None = None,
+    consistency_flags: list[ConsistencyFlag] | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -179,6 +182,28 @@ def generate_markdown_report(
                 md += f" ({'; '.join(details)})"
             md += "\n"
         md += "\n"
+
+    # --- STORY BIBLE & CONSISTENCY CHECK ---
+    if story_bible:
+        md += "---\n## 🗂️ Story Bible\n\n"
+        for entry in story_bible.values():
+            icon = "👤" if entry["entity_type"] == "character" else "📘"
+            md += f"### {icon} {entry['canonical_name']}\n"
+            if entry["aliases"]:
+                md += f"- **Aliases:** {', '.join(sorted(entry['aliases']))}\n"
+            for attr_name, sightings in entry["attributes"].items():
+                md += f"- **{attr_name.replace('_', ' ').title()}:** {sightings[-1]['value']}\n"
+            md += "\n"
+
+        if consistency_flags:
+            md += "## ⚠️ Detected Contradictions\n\n"
+            for flag in consistency_flags:
+                md += (
+                    f"- **{flag['entity_name']}.{flag['attribute']}** changed from "
+                    f"\"{flag['previous_value']}\" (Section {flag['previous_chunk_index'] + 1}) to "
+                    f"\"{flag['new_value']}\" (Section {flag['chunk_index'] + 1})\n"
+                )
+            md += "\n"
 
     md += "---\n## Detailed Chunk Breakdown\n\n"
 

@@ -39,6 +39,17 @@ class CliffhangerResult(TypedDict):
     would_readers_continue: bool
 
 
+class BibleEntity(TypedDict):
+    name: str
+    entity_type: str
+    aliases: list[str]
+    attributes: dict[str, str]
+
+
+class BibleExtractionResult(TypedDict):
+    entities: list[BibleEntity]
+
+
 class QueryLetterResult(TypedDict):
     hook_strength: PillarData
     genre_clarity: PillarData
@@ -211,6 +222,25 @@ Output format must exactly match this JSON schema:
 }"""
 
 
+CONSISTENCY_SYSTEM_PROMPT = """You are a continuity editor building a running "story bible" for a long-running serialized manuscript (a web novel, serial, or multi-chapter book). You are reading ONE section/chapter at a time and extracting every named character and every world-building/magic-system term mentioned, along with any concrete attributes stated about them in THIS section, and any aliases or nicknames used for them in THIS section. Your job is to be exhaustive and literal about what is stated in the text, not to guess or infer beyond it."""
+
+CONSISTENCY_JSON_SCHEMA = """
+You must extract story-bible entities from the provided text and return your extraction EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide an "entities" array. For each named character or world/magic-system term detected, provide an object containing:
+1. "name": The character's or term's primary name as used in this section.
+2. "entity_type": Either "character" or "term".
+3. "aliases": An array of other names, nicknames, or spellings used for this same entity in this section (empty array if none).
+4. "attributes": An object mapping short attribute-name keys (e.g. "eye_color", "hair_color", "occupation", "definition", "rules") to the value stated in this section. Only include attributes explicitly stated in the text. Use consistent, lowercase, snake_case keys across entities so the same kind of attribute can be compared later.
+
+Output format must exactly match this JSON schema:
+{
+  "entities": [
+    {"name": "", "entity_type": "character", "aliases": [], "attributes": {}}
+  ]
+}"""
+
+
 def _call_groq(system_prompt: str, text: str) -> dict:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -254,6 +284,11 @@ def analyze_cliffhanger(chapter_ending_text: str, genre: str = "None / General")
 def analyze_query_letter(text: str) -> QueryLetterResult:
     full_system_prompt = QUERY_LETTER_SYSTEM_PROMPT + "\n\n" + QUERY_JSON_SCHEMA
     return cast(QueryLetterResult, _call_groq(full_system_prompt, text))
+
+
+def extract_bible_entities(text_chunk: str) -> BibleExtractionResult:
+    full_system_prompt = CONSISTENCY_SYSTEM_PROMPT + "\n\n" + CONSISTENCY_JSON_SCHEMA
+    return cast(BibleExtractionResult, _call_groq(full_system_prompt, text_chunk))
 
 
 def analyze_chunk(
