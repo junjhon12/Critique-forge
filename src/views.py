@@ -619,6 +619,34 @@ def render_full_manuscript_mode(
                                     f"{r['cliffhanger_strength'].get('actionable_advice', '')}"
                                 )
 
+                        hook_scores = [
+                            cliffhanger_results[s["index"]]["cliffhanger_strength"].get("score", 0)
+                            for s in scenes
+                            if s["index"] in cliffhanger_results
+                        ]
+                        if len(hook_scores) > 1:
+                            _ = st.write("**Chapter-Ending Hook Strength Trend**")
+                            _ = st.line_chart(hook_scores)
+                            _ = st.caption(
+                                "Tracks cliffhanger strength across chapters. A downward trend can mean "
+                                "engagement is flagging — later chapters may need stronger hooks."
+                            )
+                            if len(hook_scores) >= 4:
+                                midpoint = len(hook_scores) // 2
+                                first_half_avg = sum(hook_scores[:midpoint]) / midpoint
+                                second_half_avg = sum(hook_scores[midpoint:]) / (len(hook_scores) - midpoint)
+                                if second_half_avg < first_half_avg - 10:
+                                    _ = st.warning(
+                                        f"⚠️ Hook strength is trending down: first-half average "
+                                        f"{first_half_avg:.0f}/100 vs. second-half {second_half_avg:.0f}/100. "
+                                        "Later chapters may need stronger chapter-ending hooks."
+                                    )
+                                elif second_half_avg > first_half_avg + 10:
+                                    _ = st.caption(
+                                        f"✅ Hook strength is trending up: {first_half_avg:.0f}/100 → "
+                                        f"{second_half_avg:.0f}/100."
+                                    )
+
                     if readiness_checklist:
                         _ = st.write("**Release-Readiness Checklist**")
                         _ = st.dataframe(
