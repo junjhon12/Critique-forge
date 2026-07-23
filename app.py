@@ -102,8 +102,14 @@ st.set_page_config(page_title="Critique-Forge AI", layout="wide")
 _ = st.sidebar.title("⚙️ Editor Settings")
 selected_persona: str = st.sidebar.radio(
     "Choose your editor's tone:",
-    ["Ruthless Critic", "Encouraging Mentor", "Grammar & Prose Stickler"]
+    ["Ruthless Critic", "Encouraging Mentor", "Grammar & Prose Stickler", "Custom"]
 )
+
+custom_prompt: str = ""
+if selected_persona == "Custom":
+    custom_prompt = st.sidebar.text_area("Write your own persona prompt:", height=200)
+    if not custom_prompt.strip():
+        _ = st.sidebar.warning("Enter a custom persona prompt to use it during analysis.")
 
 # --- MAIN UI ---
 _ = st.title("Critique-Forge AI: Developmental Editor")
@@ -156,7 +162,11 @@ if st.button("Analyze Manuscript"):
                 _ = progress_bar.progress(
                     (i) / len(chunks), text=f"Analyzing Section {i+1} of {len(chunks)}..."
                 )
-                result: CritiqueResult = analyze_chunk(chunk, persona=selected_persona)
+                result: CritiqueResult = analyze_chunk(
+                    chunk,
+                    persona=selected_persona,
+                    custom_system_prompt=custom_prompt if selected_persona == "Custom" else None,
+                )
                 all_results.append(result)
 
                 # Store pacing data for every pillar

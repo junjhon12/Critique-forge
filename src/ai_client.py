@@ -90,13 +90,14 @@ Output format must exactly match this JSON schema:
   ]
 }"""
 
-def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic") -> CritiqueResult:
+def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic", custom_system_prompt: str | None = None) -> CritiqueResult:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY is missing from environment variables.")
-    
+
     client = Groq(api_key=api_key)
-    full_system_prompt = PERSONAS.get(persona, PERSONAS["Ruthless Critic"]) + "\n\n" + JSON_SCHEMA
+    base_prompt = custom_system_prompt if custom_system_prompt else PERSONAS.get(persona, PERSONAS["Ruthless Critic"])
+    full_system_prompt = base_prompt + "\n\n" + JSON_SCHEMA
     
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant", 
