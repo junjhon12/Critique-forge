@@ -6,6 +6,7 @@ from typing import TypedDict, cast
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from src.chunker import user_text
 from src.ai_client import analyze_chunk, CritiqueResult, CharacterData, PillarData
+from src.cache import _cache_key, load_cache, save_cache
 
 _ = load_dotenv()
 
@@ -155,6 +156,7 @@ if st.button("Analyze Manuscript"):
         section_scores: list[float] = []  # Tracks each section's overall average, to find the weakest
 
         progress_bar = st.progress(0, text="Initializing Editor...")
+        cache = load_cache()
 
         try:
             # Process the Entire Manuscript Loop
@@ -162,11 +164,18 @@ if st.button("Analyze Manuscript"):
                 _ = progress_bar.progress(
                     (i) / len(chunks), text=f"Analyzing Section {i+1} of {len(chunks)}..."
                 )
-                result: CritiqueResult = analyze_chunk(
-                    chunk,
-                    persona=selected_persona,
-                    custom_system_prompt=custom_prompt if selected_persona == "Custom" else None,
-                )
+                cache_persona = custom_prompt if selected_persona == "Custom" else selected_persona
+                key = _cache_key(chunk, cache_persona)
+                if key in cache:
+                    result: CritiqueResult = cache[key]
+                else:
+                    result = analyze_chunk(
+                        chunk,
+                        persona=selected_persona,
+                        custom_system_prompt=custom_prompt if selected_persona == "Custom" else None,
+                    )
+                    cache[key] = result
+                    save_cache(cache)
                 all_results.append(result)
 
                 # Store pacing data for every pillar
