@@ -27,6 +27,21 @@ class CritiqueResult(TypedDict):
     character_codex: list[CharacterData]
 
 
+class HookCritiqueResult(TypedDict):
+    hook_strength: PillarData
+    voice_and_clarity: PillarData
+    would_request_more: bool
+    rejection_reasons: list[str]
+
+
+class QueryLetterResult(TypedDict):
+    hook_strength: PillarData
+    genre_clarity: PillarData
+    stakes_clarity: PillarData
+    overall_verdict: str
+    one_line_pitch_rewrite: str
+
+
 PERSONAS = {
     "Ruthless Critic": """You are an elite, highly analytical, and RUTHLESS Developmental Editor AI working for a top-tier publishing house. Your sole function is to read narrative text and evaluate it based strictly on four foundational pillars of storytelling: Agency, Conflict & Stakes, Compelling Arcs, and Tight Scene Structure. DO NOT BE POLITE. DO NOT FLATTER THE WRITER. You must be hyper-critical. Most amateur writing is deeply flawed, and your scores must reflect reality. 
 
@@ -53,13 +68,15 @@ Finally, act as a "Character Consistency Tracker". Extract a list of characters 
     "Grammar & Prose Stickler": """You are a meticulous, detail-oriented Copy Editor and Prose Stickler. You evaluate the 4 pillars (Agency, Conflict & Stakes, Compelling Arcs, Tight Scene Structure) but your analysis and advice MUST heavily focus on prose mechanics, sentence structure, flow, and eliminating passive voice or cliches.
 
 SCORING RUBRIC (0-100):
-- 0-39: Needs heavy line editing. 
+- 0-39: Needs heavy line editing.
 - 40-59: Draft prose. Serviceable but clunky.
 - 60-79: Clean prose. Reads well, minor tweaks needed.
 - 80-100: Flawless prose. Beautifully written.
 
 Additionally, act as a "Prose Sniper". Extract the most clunky or passive sentence and provide a flawless rewrite.
-Finally, act as a "Character Consistency Tracker". Extract a list of characters detected in the text, noting their physical traits and current motivation."""
+Finally, act as a "Character Consistency Tracker". Extract a list of characters detected in the text, noting their physical traits and current motivation.""",
+
+    "The Literary Agent": """You are an overworked literary agent skimming the slush pile. You have a stack of a hundred submissions and thirty seconds for each one. You are reading ONLY the opening page of a manuscript, and your only question is: does this earn a full request, or does it go in the rejection pile? You are blunt and unsentimental about generic openings, waking-up-and-looking-in-the-mirror scenes, weather reports, info-dumped backstory, and prologues that stall the real story. You reward a clear voice, an immediate sense of who wants what and why it matters, and a reason to turn the page.""",
 }
 
 GENRE_PRESETS = {
@@ -112,39 +129,111 @@ Output format must exactly match this JSON schema:
   ]
 }"""
 
+HOOK_JSON_SCHEMA = """
+You must evaluate the provided opening page and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide a "hook_strength" object containing:
+1. "score": An integer from 0 to 100 for how strongly this opening hooks a reader.
+2. "analysis": A 2-3 sentence tear-down of what is or isn't earning attention in these opening lines.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to strengthen the hook.
+
+Provide a "voice_and_clarity" object containing:
+1. "score": An integer from 0 to 100 for how distinct and clear the narrative voice is.
+2. "analysis": A 2-3 sentence assessment of the voice and clarity of what's happening.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to sharpen the voice or clarity.
+
+Provide "would_request_more": a boolean, true only if this opening page would earn a full manuscript request from an agent.
+
+Provide "rejection_reasons": an array of short strings, each a concrete, specific reason an agent would stop reading (empty array if none).
+
+Output format must exactly match this JSON schema:
+{
+  "hook_strength": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "voice_and_clarity": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "would_request_more": false,
+  "rejection_reasons": []
+}"""
+
+QUERY_LETTER_SYSTEM_PROMPT = """You are a literary agent and acquisitions editor evaluating a QUERY LETTER or SYNOPSIS, not manuscript prose. You are judging the pitch itself: whether the opening hook of the letter grabs attention, whether the genre and comp-title positioning is clear and marketable, and whether the protagonist's goal and the stakes are legible within the first read. You do not evaluate prose style, scene structure, or line-level writing quality — only the query/synopsis as a sales pitch for the book."""
+
+QUERY_JSON_SCHEMA = """
+You must evaluate the provided query letter or synopsis and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide a "hook_strength" object containing:
+1. "score": An integer from 0 to 100 for how strongly the opening hook of the letter grabs attention.
+2. "analysis": A 2-3 sentence tear-down of what is or isn't working in the hook.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to strengthen the hook.
+
+Provide a "genre_clarity" object containing:
+1. "score": An integer from 0 to 100 for how clearly the genre and market positioning (comp titles, category) come through.
+2. "analysis": A 2-3 sentence assessment of genre/comp-title clarity.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to clarify genre or positioning.
+
+Provide a "stakes_clarity" object containing:
+1. "score": An integer from 0 to 100 for how clearly the protagonist's goal and the stakes come through.
+2. "analysis": A 2-3 sentence assessment of whether goal and stakes are legible.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to sharpen goal/stakes.
+
+Provide "overall_verdict": a string, exactly one of "Pass", "Revise & Resubmit", or "Request Pages".
+
+Provide "one_line_pitch_rewrite": a string, your tightened one-sentence rewrite of the book's hook.
+
+Output format must exactly match this JSON schema:
+{
+  "hook_strength": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "genre_clarity": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "stakes_clarity": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "overall_verdict": "",
+  "one_line_pitch_rewrite": ""
+}"""
+
+
+def _call_groq(system_prompt: str, text: str) -> dict:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is missing from environment variables.")
+
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Analyze the following text according to your system instructions:\n\n{text}"}
+        ],
+        temperature=0.1,
+    )
+
+    content = response.choices[0].message.content
+    if content is None:
+        raise ValueError("The LLM API returned an empty response.")
+
+    raw_content = content.strip()
+    if raw_content.startswith("```"):
+        raw_content = raw_content.split("\n", 1)[-1]
+    if raw_content.endswith("```"):
+        raw_content = raw_content.rsplit("\n", 1)[0]
+
+    return json.loads(raw_content.strip())
+
+
+def analyze_hook(text_chunk: str, genre: str = "None / General") -> HookCritiqueResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = PERSONAS["The Literary Agent"] + genre_guidance + "\n\n" + HOOK_JSON_SCHEMA
+    return cast(HookCritiqueResult, _call_groq(full_system_prompt, text_chunk))
+
+
+def analyze_query_letter(text: str) -> QueryLetterResult:
+    full_system_prompt = QUERY_LETTER_SYSTEM_PROMPT + "\n\n" + QUERY_JSON_SCHEMA
+    return cast(QueryLetterResult, _call_groq(full_system_prompt, text))
+
+
 def analyze_chunk(
     text_chunk: str,
     persona: str = "Ruthless Critic",
     custom_system_prompt: str | None = None,
     genre: str = "None / General",
 ) -> CritiqueResult:
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY is missing from environment variables.")
-
-    client = Groq(api_key=api_key)
     base_prompt = custom_system_prompt if custom_system_prompt else PERSONAS.get(persona, PERSONAS["Ruthless Critic"])
     genre_guidance = GENRE_PRESETS.get(genre, "")
     full_system_prompt = base_prompt + genre_guidance + "\n\n" + JSON_SCHEMA
-    
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant", 
-        messages=[
-            {"role": "system", "content": full_system_prompt},
-            {"role": "user", "content": f"Analyze the following text according to your system instructions:\n\n{text_chunk}"}
-        ],
-        temperature=0.1, 
-    )
-    
-    content = response.choices[0].message.content
-    if content is None:
-        raise ValueError("The LLM API returned an empty response.")
-        
-    raw_content = content.strip()
-    if raw_content.startswith("```"):
-        raw_content = raw_content.split("\n", 1)[-1]
-    if raw_content.endswith("```"):
-        raw_content = raw_content.rsplit("\n", 1)[0]
-        
-    parsed_result = cast(CritiqueResult, json.loads(raw_content.strip()))
-    return parsed_result
+    return cast(CritiqueResult, _call_groq(full_system_prompt, text_chunk))
