@@ -135,8 +135,17 @@ GENRE FOCUS: This is Middle-Grade fiction. Judge Agency and Conflict & Stakes ag
     "Screenplay": """
 GENRE FOCUS: This is a Screenplay, not prose. Judge the four pillars through action lines and dialogue, not narrative prose. Instead of the usual "Prose Sniper" hunt for telling-not-showing prose, act as a "Script Sniper": extract one bloated or overly literary action line or one on-the-nose dialogue line, and rewrite it in lean, visual screenplay style (spare action lines, subtext-driven dialogue). Populate the "prose_sniper" JSON field with this screenplay-style rewrite instead of a prose rewrite.""",
 
-    "Web Novel / Serial": """
+    "Web Novel: General Serial": """
 GENRE FOCUS: This is a Web Novel / Serial (e.g. webnovel, Wattpad-style, chapter-a-day serialized fiction). Judge Tight Scene Structure heavily on whether each chunk delivers a per-chapter hook or cliffhanger strong enough to justify a reader returning tomorrow. Reward escalating serialized stakes under Conflict & Stakes.""",
+
+    "Web Novel: LitRPG / Progression Fantasy": """
+GENRE FOCUS: This is LitRPG / Progression Fantasy serialized fiction. Judge Compelling Arcs primarily on power-progression pacing: each arc should deliver an earned, escalating power-up rather than a sudden unexplained jump, and gains should feel proportionate to challenges overcome. Judge Tight Scene Structure on the balance between "system" notation (stat blocks, level-up/skill/EXP notifications) and narrative prose — flag chunks where system-message crunch reads as an info-dump wall of numbers instead of being woven into scene action, and equally flag chunks that under-deliver expected crunch for readers who came for the numbers. Reward chapter-ending hooks tied to a stat reveal, new skill, or boss/rank threshold under Conflict & Stakes.""",
+
+    "Web Novel: Harem / Reverse Harem": """
+GENRE FOCUS: This is Harem / Reverse Harem serialized fiction. Judge Compelling Arcs on love-interest (LI) pacing: new LIs should be introduced with enough spacing and distinct hook to register individually, not clustered so fast that the cast blurs together. Judge Agency partly on whether each active LI gets recurring scene presence and their own throughline rather than vanishing for long stretches once introduced ("forgotten LI" syndrome). Judge Conflict & Stakes on jealousy/rivalry tension between LIs being used as an escalating relationship-stakes engine, not just background noise. Reward chapter endings that advance an LI-specific relationship beat under Tight Scene Structure.""",
+
+    "Web Novel: Cultivation / Xianxia": """
+GENRE FOCUS: This is Cultivation / Xianxia serialized fiction. Judge Compelling Arcs on rank/realm progression pacing — breakthroughs should follow a legible tier system and feel earned through trial, resource, or insight rather than arbitrary. Judge Tight Scene Structure on tournament-arc and sect-conflict conventions (clear stakes for each duel/trial, escalating opponent strength) and on master-disciple or sect-hierarchy dynamics being used to raise stakes. Reward chapter-ending hooks tied to a rank reveal, challenge announcement, or looming stronger opponent under Conflict & Stakes.""",
 }
 
 JSON_SCHEMA = """

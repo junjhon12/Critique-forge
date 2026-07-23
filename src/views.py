@@ -17,7 +17,9 @@ from src.style_audit import audit_filter_words, detect_pov_tense, PovTenseFlag
 from src.structure import (
     detect_scenes, map_beats_to_scenes, analyze_pacing_weight,
     analyze_chapter_length_consistency, check_platform_pacing_conformance,
+    detect_stat_blocks, analyze_li_balance,
     SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag,
+    StatBlockFlag, LIBalanceEntry,
     PLATFORM_PACING_RATIONALE,
 )
 from src.chunker import user_text
@@ -171,7 +173,9 @@ def render_full_manuscript_mode(
     platform_max_words: int = 0,
     manuscript_format: str = "Web Novel",
     platform_name: str = "None",
+    li_names: list[str] | None = None,
 ) -> None:
+    li_names = li_names or []
     _ = st.markdown("Upload your manuscript to analyze its structural integrity.")
 
     upload_mode: str = st.radio(
@@ -255,6 +259,12 @@ def render_full_manuscript_mode(
             platform_pacing_flags: list[PlatformPacingFlag] = (
                 check_platform_pacing_conformance(scenes, platform_min_words, platform_max_words)
                 if is_web_novel else []
+            )
+            stat_block_flags: list[StatBlockFlag] = (
+                detect_stat_blocks(raw_text, scenes) if is_web_novel else []
+            )
+            li_balance: list[LIBalanceEntry] = (
+                analyze_li_balance(raw_text, li_names) if is_web_novel else []
             )
 
             # State trackers for the full manuscript
@@ -611,6 +621,58 @@ def render_full_manuscript_mode(
                                 f"— {impact} ({p['severity']} deviation)."
                             )
 
+                    if stat_block_flags:
+                        _ = st.write("**Stat-Block / System-Notification Density (LitRPG)**")
+                        _ = st.caption(
+                            "Shares of each chapter taken up by bracketed status lines, level-up, "
+                            "and skill/EXP notifications. Chapters over ~30% crunch can read as an "
+                            "info-dump wall of numbers instead of narrative."
+                        )
+                        crunch_issues = [f for f in stat_block_flags if f["flag"] != "ok"]
+                        _ = st.dataframe(
+                            [
+                                {
+                                    "Scene": f["scene_index"] + 1,
+                                    "Words": f["word_count"],
+                                    "Stat-Block Words": f["stat_block_word_count"],
+                                    "Density": f"{f['density_pct']:.0f}%",
+                                    "Flag": f["flag"],
+                                }
+                                for f in stat_block_flags
+                            ],
+                            use_container_width=True,
+                        )
+                        for f in crunch_issues:
+                            _ = st.warning(
+                                f"Scene {f['scene_index'] + 1} is **{f['density_pct']:.0f}%** stat-block/system "
+                                "notation — consider weaving some of this into scene action instead of "
+                                "back-to-back notifications."
+                            )
+
+                    if li_balance:
+                        _ = st.write("**Love Interest Screen-Time Balance (Harem)**")
+                        _ = st.caption(
+                            "Share of total love-interest mentions per name, across the whole manuscript."
+                        )
+                        _ = st.dataframe(
+                            [
+                                {
+                                    "Name": e["name"],
+                                    "Mentions": e["mention_count"],
+                                    "Share": f"{e['share_pct']:.0f}%",
+                                    "Flag": e["flag"],
+                                }
+                                for e in li_balance
+                            ],
+                            use_container_width=True,
+                        )
+                        for e in li_balance:
+                            if e["flag"] != "ok":
+                                _ = st.warning(
+                                    f"**{e['name']}** accounts for only {e['share_pct']:.0f}% of love-interest "
+                                    "mentions — at risk of feeling forgotten relative to the rest of the cast."
+                                )
+
                     if cliffhanger_results:
                         _ = st.write("**Chapter-Ending Cliffhanger Strength**")
                         _ = st.dataframe(
@@ -788,6 +850,11 @@ def render_full_manuscript_mode(
                     tags = ttag_result.get("suggested_tags", [])
                     if tags:
                         _ = st.write(f"**Suggested Tags:** {', '.join(tags)}")
+                        _ = st.caption(
+                            "These tags are stylistic/descriptive suggestions based on your manuscript's "
+                            "content, not a guarantee of current platform discoverability — this tool "
+                            "doesn't have access to real-time trending-tag data."
+                        )
 
                     _ = st.info(ttag_result.get("discoverability_note", ""))
 

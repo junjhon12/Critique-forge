@@ -12,10 +12,21 @@ st.set_page_config(page_title="Critique-Forge AI", layout="wide")
 
 _ = st.sidebar.title("⚙️ Editor Settings")
 manuscript_name: str = st.sidebar.text_input("Manuscript name (for version history)", value="Untitled")
-analysis_mode: str = st.sidebar.radio(
-    "Analysis mode:",
-    ["Full Manuscript", "Query Letter / Synopsis", "Read Like an Agent (First Page)"],
+
+writing_for: str = st.sidebar.radio(
+    "Writing for:",
+    ["Web Novel / Serial", "Traditional Publishing"],
+    help="Web Novel / Serial hides the query-letter and literary-agent simulation modes, which "
+         "only apply to querying literary agents for traditional publication.",
 )
+_is_web_novel_track = writing_for == "Web Novel / Serial"
+
+_mode_options = (
+    ["Full Manuscript"]
+    if _is_web_novel_track
+    else ["Full Manuscript", "Query Letter / Synopsis", "Read Like an Agent (First Page)"]
+)
+analysis_mode: str = st.sidebar.radio("Analysis mode:", _mode_options)
 
 selected_persona: str = "Ruthless Critic"
 custom_prompt: str = ""
@@ -25,14 +36,20 @@ platform_min_words: int = 0
 platform_max_words: int = 0
 manuscript_format: str = "Web Novel"
 selected_platform: str = "None"
+li_names: list[str] = []
+
+_web_novel_genres = [k for k in GENRE_PRESETS if k.startswith("Web Novel") or k == "None / General"]
 
 if analysis_mode == "Full Manuscript":
-    manuscript_format = st.sidebar.radio(
-        "Manuscript format:",
-        ["Web Novel", "Screenplay"],
-        help="Web Novel unlocks chapter-ending cliffhanger scoring, platform pacing targets, "
-             "and a release-readiness checklist. Screenplay skips those serialized-fiction checks.",
-    )
+    if _is_web_novel_track:
+        manuscript_format = "Web Novel"
+    else:
+        manuscript_format = st.sidebar.radio(
+            "Manuscript format:",
+            ["Web Novel", "Screenplay"],
+            help="Web Novel unlocks chapter-ending cliffhanger scoring, platform pacing targets, "
+                 "and a release-readiness checklist. Screenplay skips those serialized-fiction checks.",
+        )
 
     selected_persona = st.sidebar.radio(
         "Choose your editor's tone:",
@@ -44,7 +61,8 @@ if analysis_mode == "Full Manuscript":
         if not custom_prompt.strip():
             _ = st.sidebar.warning("Enter a custom persona prompt to use it during analysis.")
 
-    selected_genre = st.sidebar.selectbox("Genre / format:", list(GENRE_PRESETS.keys()))
+    genre_options = _web_novel_genres if _is_web_novel_track else list(GENRE_PRESETS.keys())
+    selected_genre = st.sidebar.selectbox("Genre / format:", genre_options)
     selected_structure_template = st.sidebar.selectbox(
         "Structure template (optional):", list(STRUCTURE_TEMPLATES.keys())
     )
@@ -58,6 +76,14 @@ if analysis_mode == "Full Manuscript":
             platform_max_words = st.sidebar.number_input("Max words per chapter", min_value=0, value=3000, step=100)
         elif selected_platform != "None":
             platform_min_words, platform_max_words = PLATFORM_WORD_COUNT_NORMS[selected_platform]
+
+        if selected_genre == "Web Novel: Harem / Reverse Harem":
+            li_names_raw = st.sidebar.text_input(
+                "Love interest names (comma-separated, optional):",
+                help="Enables a screen-time balance check that flags love interests at risk of "
+                     "feeling forgotten relative to the rest of the cast.",
+            )
+            li_names = [n.strip() for n in li_names_raw.split(",") if n.strip()]
 elif analysis_mode == "Read Like an Agent (First Page)":
     selected_genre = st.sidebar.selectbox("Genre / format:", list(GENRE_PRESETS.keys()))
 
@@ -71,5 +97,5 @@ elif analysis_mode == "Read Like an Agent (First Page)":
 else:
     render_full_manuscript_mode(
         manuscript_name, selected_persona, custom_prompt, selected_genre, selected_structure_template,
-        platform_min_words, platform_max_words, manuscript_format, selected_platform,
+        platform_min_words, platform_max_words, manuscript_format, selected_platform, li_names,
     )

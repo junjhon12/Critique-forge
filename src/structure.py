@@ -5,9 +5,20 @@ from typing import TypedDict
 _HEADING_RE = re.compile(r"^\s*(chapter|scene|part)\s+\w+.*$", re.IGNORECASE | re.MULTILINE)
 _SCENE_BREAK_RE = re.compile(r"^\s*(\*\s*\*\s*\*|-{3,}|#{3,})\s*$", re.MULTILINE)
 
+# LitRPG-style "system" notation: bracketed status lines, level-up/skill/EXP callouts.
+# Matched per-line (via fullmatch on a stripped line), not with MULTILINE ^$, since scene text
+# is reconstructed by joining words and loses real newlines.
+_STAT_BLOCK_LINE_RE = re.compile(
+    r"(\[.*\]|.*\b(level\s*up|you\s*have\s*(gained|learned|acquired)|new\s*skill|"
+    r"[+\-]\s*\d+\s*(exp|xp|hp|mp|sp)\b)\b.*)",
+    re.IGNORECASE,
+)
+
 DEFAULT_TOLERANCE_PCT = 10.0
 DEFAULT_STDDEV_THRESHOLD = 1.5
 DEFAULT_Z_THRESHOLD = 1.5
+DEFAULT_STAT_BLOCK_HIGH_DENSITY_PCT = 30.0
+DEFAULT_LI_FORGOTTEN_SHARE_PCT = 10.0
 
 
 class SceneInfo(TypedDict):
@@ -58,6 +69,21 @@ class PlatformPacingFlag(TypedDict):
     max_words: int
     flag: str
     severity: str | None
+
+
+class StatBlockFlag(TypedDict):
+    scene_index: int
+    word_count: int
+    stat_block_word_count: int
+    density_pct: float
+    flag: str
+
+
+class LIBalanceEntry(TypedDict):
+    name: str
+    mention_count: int
+    share_pct: float
+    flag: str
 
 
 PLATFORM_WORD_COUNT_NORMS: dict[str, tuple[int, int]] = {
@@ -372,3 +398,81 @@ def analyze_chapter_length_consistency(
             "flag": flag,
         })
     return flags
+
+
+def detect_stat_blocks(
+    raw_text: str,
+    scenes: list[SceneInfo],
+    high_density_pct: float = DEFAULT_STAT_BLOCK_HIGH_DENSITY_PCT,
+) -> list[StatBlockFlag]:
+    """Flag LitRPG-style chapters where system/stat-block notation dominates over narrative prose.
+
+    Detects bracketed status lines and level-up/skill/EXP callouts per chapter (heuristic regex,
+    no LLM call) and computes what share of the chapter's words fall inside them.
+    """
+    if not scenes or not raw_text.strip():
+        return []
+
+    stat_word_counts = {scene["index"]: 0 for scene in scenes}
+    cursor = 0
+    for line in raw_text.splitlines():
+        line_word_count = len(line.split())
+        if line_word_count == 0:
+            continue
+        line_start = cursor
+        cursor += line_word_count
+        if _STAT_BLOCK_LINE_RE.fullmatch(line.strip()):
+            for scene in scenes:
+                scene_start = scene["start_word"]
+                scene_end = scene_start + scene["word_count"]
+                if scene_start <= line_start < scene_end:
+                    stat_word_counts[scene["index"]] += line_word_count
+                    break
+
+    flags: list[StatBlockFlag] = []
+    for scene in scenes:
+        stat_block_word_count = stat_word_counts[scene["index"]]
+        density_pct = (stat_block_word_count / scene["word_count"] * 100) if scene["word_count"] else 0.0
+        flag = "high_crunch" if density_pct >= high_density_pct else "ok"
+        flags.append({
+            "scene_index": scene["index"],
+            "word_count": scene["word_count"],
+            "stat_block_word_count": stat_block_word_count,
+            "density_pct": density_pct,
+            "flag": flag,
+        })
+    return flags
+
+
+def analyze_li_balance(
+    raw_text: str,
+    character_names: list[str],
+    forgotten_share_pct: float = DEFAULT_LI_FORGOTTEN_SHARE_PCT,
+) -> list[LIBalanceEntry]:
+    """Count per-name mention share across a manuscript to flag under-used love interests.
+
+    Heuristic word-boundary name counting (no LLM call); flags any name whose mention share
+    falls under `forgotten_share_pct` of total love-interest mentions as at risk of feeling
+    forgotten to readers.
+    """
+    names = [n.strip() for n in character_names if n.strip()]
+    if not names or not raw_text.strip():
+        return []
+
+    counts: dict[str, int] = {}
+    for name in names:
+        pattern = re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
+        counts[name] = len(pattern.findall(raw_text))
+
+    total_mentions = sum(counts.values())
+    entries: list[LIBalanceEntry] = []
+    for name in names:
+        share_pct = (counts[name] / total_mentions * 100) if total_mentions else 0.0
+        flag = "forgotten_risk" if share_pct < forgotten_share_pct else "ok"
+        entries.append({
+            "name": name,
+            "mention_count": counts[name],
+            "share_pct": share_pct,
+            "flag": flag,
+        })
+    return entries
