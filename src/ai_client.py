@@ -39,6 +39,11 @@ class CliffhangerResult(TypedDict):
     would_readers_continue: bool
 
 
+class RecapResult(TypedDict):
+    recap: str
+    cliffhanger_reminder: str
+
+
 class BibleEntity(TypedDict):
     name: str
     entity_type: str
@@ -222,6 +227,22 @@ Output format must exactly match this JSON schema:
 }"""
 
 
+RECAP_SYSTEM_PROMPT = """You are writing a "Previously on..." recap for a serialized web novel/webtoon, in the style of a TV-show cold-open recap. Readers return to this story on a weekly or chapter-by-chapter basis and may have forgotten key plot points, character motivations, and unresolved tension since they last read. Your recap should be written in an engaging, in-universe narrator voice (not a dry editorial synopsis), remind the reader of the key events, character goals, and any unresolved conflict from the provided text, and end on a note that primes the reader for what comes next. Keep it concise, aiming for roughly 150-250 words. Do not invent plot details beyond what is in the provided text."""
+
+RECAP_JSON_SCHEMA = """
+You must summarize the provided chapter(s) and return your recap EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide "recap": a string, the full "Previously on..." style recap in an engaging, in-universe narrator voice, covering the key events, character motivations, and unresolved tension in the provided text.
+
+Provide "cliffhanger_reminder": a string, a single concise sentence reminding the reader exactly where the provided text leaves off.
+
+Output format must exactly match this JSON schema:
+{
+  "recap": "",
+  "cliffhanger_reminder": ""
+}"""
+
+
 CONSISTENCY_SYSTEM_PROMPT = """You are a continuity editor building a running "story bible" for a long-running serialized manuscript (a web novel, serial, or multi-chapter book). You are reading ONE section/chapter at a time and extracting every named character and every world-building/magic-system term mentioned, along with any concrete attributes stated about them in THIS section, and any aliases or nicknames used for them in THIS section. Your job is to be exhaustive and literal about what is stated in the text, not to guess or infer beyond it."""
 
 CONSISTENCY_JSON_SCHEMA = """
@@ -279,6 +300,12 @@ def analyze_cliffhanger(chapter_ending_text: str, genre: str = "None / General")
     genre_guidance = GENRE_PRESETS.get(genre, "")
     full_system_prompt = CLIFFHANGER_SYSTEM_PROMPT + genre_guidance + "\n\n" + CLIFFHANGER_JSON_SCHEMA
     return cast(CliffhangerResult, _call_groq(full_system_prompt, chapter_ending_text))
+
+
+def analyze_recap(chapter_text: str, genre: str = "None / General") -> RecapResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = RECAP_SYSTEM_PROMPT + genre_guidance + "\n\n" + RECAP_JSON_SCHEMA
+    return cast(RecapResult, _call_groq(full_system_prompt, chapter_text))
 
 
 def analyze_query_letter(text: str) -> QueryLetterResult:

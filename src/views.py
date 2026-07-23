@@ -5,7 +5,9 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from src.ai_client import (
     analyze_chunk, analyze_hook, analyze_query_letter, analyze_cliffhanger, extract_bible_entities,
+    analyze_recap,
     CritiqueResult, CharacterData, HookCritiqueResult, QueryLetterResult, CliffhangerResult,
+    RecapResult,
 )
 from src.consistency import merge_entity, StoryBibleEntry, ConsistencyFlag
 from src.cache import _cache_key, load_cache, save_cache
@@ -631,6 +633,75 @@ def render_full_manuscript_mode(
                             ],
                             use_container_width=True,
                         )
+
+                # --- RECAP / "PREVIOUSLY ON..." GENERATOR (LLM; Web Novel only) ---
+                if is_web_novel and len(scenes) >= 1:
+                    _ = st.write("---")
+                    _ = st.subheader("📼 Previously On... Recap Generator")
+                    _ = st.caption(
+                        "Generate a 'Previously on...' recap of the last chapter (or a recent arc) "
+                        "to paste at the top of your next chapter for returning readers."
+                    )
+
+                    scene_labels = [
+                        scene["heading"] or f"Scene {scene['index'] + 1}" for scene in scenes
+                    ]
+                    recap_col1, recap_col2 = st.columns(2)
+                    with recap_col1:
+                        recap_start_idx: int = st.selectbox(
+                            "Recap from chapter:",
+                            list(range(len(scenes))),
+                            index=len(scenes) - 1,
+                            format_func=lambda i: scene_labels[i],
+                            key="recap_start_idx",
+                        )
+                    with recap_col2:
+                        recap_end_idx: int = st.selectbox(
+                            "Recap through chapter:",
+                            list(range(len(scenes))),
+                            index=len(scenes) - 1,
+                            format_func=lambda i: scene_labels[i],
+                            key="recap_end_idx",
+                        )
+
+                    if recap_end_idx < recap_start_idx:
+                        _ = st.warning("The end chapter must be at or after the start chapter.")
+                    else:
+                        words = raw_text.split()
+                        recap_start_word = scenes[recap_start_idx]["start_word"]
+                        recap_end_word = scenes[recap_end_idx]["start_word"] + scenes[recap_end_idx]["word_count"]
+                        recap_source_text = " ".join(words[recap_start_word:recap_end_word])
+
+                        if not recap_source_text.strip():
+                            _ = st.info("No chapter text found for the selected range.")
+                        else:
+                            recap_key = _cache_key(recap_source_text, "Recap", selected_genre)
+                            if recap_key in cache:
+                                recap_result: RecapResult = cache[recap_key]
+                            else:
+                                recap_result = analyze_recap(recap_source_text, genre=selected_genre)
+                                cache[recap_key] = recap_result
+                                save_cache(cache)
+
+                            _ = st.text_area(
+                                "Recap (copy/paste this at the top of your next chapter):",
+                                value=recap_result.get("recap", ""),
+                                height=200,
+                                key="recap_output_text_area",
+                            )
+                            _ = st.caption(f"**Where it leaves off:** {recap_result.get('cliffhanger_reminder', '')}")
+
+                            recap_download_str = (
+                                f"# Previously On...\n\n{recap_result.get('recap', '')}\n\n"
+                                f"**Where it leaves off:** {recap_result.get('cliffhanger_reminder', '')}\n"
+                            )
+                            _ = st.download_button(
+                                label="📥 Download Recap",
+                                data=recap_download_str,
+                                file_name="CritiqueForge_Recap.md",
+                                mime="text/markdown",
+                                key="recap_download_button",
+                            )
 
                 # --- WEAKEST SECTION FINDER ---
                 _ = st.write("---")
