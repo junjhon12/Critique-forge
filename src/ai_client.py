@@ -62,6 +62,28 @@ Additionally, act as a "Prose Sniper". Extract the most clunky or passive senten
 Finally, act as a "Character Consistency Tracker". Extract a list of characters detected in the text, noting their physical traits and current motivation."""
 }
 
+GENRE_PRESETS = {
+    "None / General": "",
+
+    "Literary Fiction": """
+GENRE FOCUS: This is Literary Fiction. When judging the four pillars, weight interiority, thematic resonance, and prose precision heavily under Compelling Arcs and Tight Scene Structure — plot-level stakes matter less than psychological and thematic depth.""",
+
+    "Thriller": """
+GENRE FOCUS: This is a Thriller. When judging the four pillars, weight Conflict & Stakes and Tight Scene Structure heavily toward pacing, tension escalation, and chapter-ending hooks. Passive or slow scenes should be penalized harder than in other genres.""",
+
+    "Romance": """
+GENRE FOCUS: This is Romance. When judging Conflict & Stakes, interpret "stakes" primarily as relationship and emotional tension between the leads (longing, miscommunication, vulnerability) rather than external plot stakes. Reward scenes that build romantic/sexual tension under Compelling Arcs.""",
+
+    "Middle-Grade": """
+GENRE FOCUS: This is Middle-Grade fiction. Judge Agency and Conflict & Stakes against age-appropriate expectations — a child protagonist's small-scale stakes (friendship, belonging, a bully, a secret) should be treated as fully valid stakes, not penalized for being low-scale. Tone and pacing should stay brisk and accessible.""",
+
+    "Screenplay": """
+GENRE FOCUS: This is a Screenplay, not prose. Judge the four pillars through action lines and dialogue, not narrative prose. Instead of the usual "Prose Sniper" hunt for telling-not-showing prose, act as a "Script Sniper": extract one bloated or overly literary action line or one on-the-nose dialogue line, and rewrite it in lean, visual screenplay style (spare action lines, subtext-driven dialogue). Populate the "prose_sniper" JSON field with this screenplay-style rewrite instead of a prose rewrite.""",
+
+    "Web Novel / Serial": """
+GENRE FOCUS: This is a Web Novel / Serial (e.g. webnovel, Wattpad-style, chapter-a-day serialized fiction). Judge Tight Scene Structure heavily on whether each chunk delivers a per-chapter hook or cliffhanger strong enough to justify a reader returning tomorrow. Reward escalating serialized stakes under Conflict & Stakes.""",
+}
+
 JSON_SCHEMA = """
 You must evaluate the provided text and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
 For each of the four pillars, provide:
@@ -90,14 +112,20 @@ Output format must exactly match this JSON schema:
   ]
 }"""
 
-def analyze_chunk(text_chunk: str, persona: str = "Ruthless Critic", custom_system_prompt: str | None = None) -> CritiqueResult:
+def analyze_chunk(
+    text_chunk: str,
+    persona: str = "Ruthless Critic",
+    custom_system_prompt: str | None = None,
+    genre: str = "None / General",
+) -> CritiqueResult:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY is missing from environment variables.")
 
     client = Groq(api_key=api_key)
     base_prompt = custom_system_prompt if custom_system_prompt else PERSONAS.get(persona, PERSONAS["Ruthless Critic"])
-    full_system_prompt = base_prompt + "\n\n" + JSON_SCHEMA
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = base_prompt + genre_guidance + "\n\n" + JSON_SCHEMA
     
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant", 

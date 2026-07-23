@@ -8,8 +8,8 @@ CACHE_DIR = ".cache"
 CACHE_PATH = os.path.join(CACHE_DIR, "critique_forge_cache.json")
 
 
-def _cache_key(chunk: str, persona: str) -> str:
-    return hashlib.sha256(f"{persona}::{chunk}".encode()).hexdigest()
+def _cache_key(chunk: str, persona: str, genre: str = "None / General") -> str:
+    return hashlib.sha256(f"{persona}::{genre}::{chunk}".encode()).hexdigest()
 
 
 def load_cache() -> dict[str, CritiqueResult]:

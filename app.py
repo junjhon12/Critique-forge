@@ -6,10 +6,11 @@ from dotenv import load_dotenv
 from typing import TypedDict, cast
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from src.chunker import user_text
-from src.ai_client import analyze_chunk, CritiqueResult, CharacterData, PillarData
+from src.ai_client import analyze_chunk, CritiqueResult, CharacterData, PillarData, GENRE_PRESETS
 from src.cache import _cache_key, load_cache, save_cache
 from src.history import manuscript_id as _manuscript_id, load_history, append_history
 from src.diff import render_diff_html
+from src.style_audit import audit_filter_words, detect_pov_tense, PovTenseFlag
 
 _ = load_dotenv()
 
@@ -56,6 +57,8 @@ def generate_markdown_report(
     all_characters: dict[str, CharacterData] | None = None,
     prose_snipers: list[SniperHit] | None = None,
     section_scores: list[float] | None = None,
+    filter_word_counts: dict[str, int] | None = None,
+    pov_tense_flags: list[PovTenseFlag] | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -87,6 +90,27 @@ def generate_markdown_report(
             md += f"- *Telling / Passive:* \"{hit.get('bad_quote', '')}\"\n"
             md += f"- *Showing / Active Rewrite:* \"{hit.get('rewritten_example', '')}\"\n\n"
 
+    # --- STYLE & CONSISTENCY AUDIT ---
+    shift_flags = [f for f in (pov_tense_flags or []) if f["shifted_pov"] or f["shifted_tense"]]
+    if filter_word_counts or shift_flags:
+        md += "---\n## 📝 Style & Consistency Audit\n\n"
+        if filter_word_counts:
+            md += "**Filter word / crutch word counts:**\n\n"
+            for term, count in list(filter_word_counts.items())[:15]:
+                md += f"- \"{term}\": {count}\n"
+            md += "\n"
+        if shift_flags:
+            md += "**Possible POV/tense shifts (heuristic):**\n\n"
+            for flag in shift_flags:
+                prev_flag = (pov_tense_flags or [])[flag["chunk_index"] - 1]
+                details: list[str] = []
+                if flag["shifted_pov"]:
+                    details.append(f"POV shifted from {prev_flag['dominant_pov']}-person to {flag['dominant_pov']}-person")
+                if flag["shifted_tense"]:
+                    details.append(f"tense shifted from {prev_flag['dominant_tense']} to {flag['dominant_tense']}")
+                md += f"- Section {flag['chunk_index'] + 1}: {' and '.join(details)}\n"
+            md += "\n"
+
     md += "---\n## Detailed Chunk Breakdown\n\n"
 
     for i, result in enumerate(all_results):
@@ -116,6 +140,8 @@ if selected_persona == "Custom":
     if not custom_prompt.strip():
         _ = st.sidebar.warning("Enter a custom persona prompt to use it during analysis.")
 
+selected_genre: str = st.sidebar.selectbox("Genre / format:", list(GENRE_PRESETS.keys()))
+
 # --- MAIN UI ---
 _ = st.title("Critique-Forge AI: Developmental Editor")
 _ = st.markdown("Upload your manuscript to analyze its structural integrity.")
@@ -140,6 +166,10 @@ if st.button("Analyze Manuscript"):
         _ = st.error("Please upload a file or paste text to analyze.")
     else:
         chunks: list[str] = user_text(raw_text)
+
+        # --- LOCAL STYLE & CONSISTENCY AUDIT (no LLM call, runs on every analysis) ---
+        filter_word_counts: dict[str, int] = audit_filter_words(raw_text)
+        pov_tense_flags: list[PovTenseFlag] = detect_pov_tense(chunks)
 
         # State trackers for the full manuscript
         all_results: list[CritiqueResult] = []
@@ -169,7 +199,7 @@ if st.button("Analyze Manuscript"):
                     (i) / len(chunks), text=f"Analyzing Section {i+1} of {len(chunks)}..."
                 )
                 cache_persona = custom_prompt if selected_persona == "Custom" else selected_persona
-                key = _cache_key(chunk, cache_persona)
+                key = _cache_key(chunk, cache_persona, selected_genre)
                 if key in cache:
                     result: CritiqueResult = cache[key]
                 else:
@@ -177,6 +207,7 @@ if st.button("Analyze Manuscript"):
                         chunk,
                         persona=selected_persona,
                         custom_system_prompt=custom_prompt if selected_persona == "Custom" else None,
+                        genre=selected_genre,
                     )
                     cache[key] = result
                     save_cache(cache)
@@ -241,6 +272,7 @@ if st.button("Analyze Manuscript"):
             append_history(current_manuscript_id, {
                 "timestamp": datetime.now().isoformat(),
                 "persona": cache_persona,
+                "genre": selected_genre,
                 "avg_scores": avg_scores,
                 "num_sections": len(chunks),
             })
@@ -249,6 +281,7 @@ if st.button("Analyze Manuscript"):
             st.session_state["last_results"] = all_results
             st.session_state["last_persona"] = selected_persona
             st.session_state["last_custom_prompt"] = custom_prompt
+            st.session_state["last_genre"] = selected_genre
 
             # --- TENSION LINE GRAPH ---
             if len(pacing_data["agency"]) > 1:
@@ -317,6 +350,33 @@ if st.button("Analyze Manuscript"):
             else:
                 _ = st.info("No major prose violations detected across the manuscript. Clean writing!")
 
+            # --- STYLE & CONSISTENCY AUDIT (local, no LLM) ---
+            _ = st.write("---")
+            _ = st.subheader("📝 Style & Consistency Audit")
+
+            shift_flags = [f for f in pov_tense_flags if f["shifted_pov"] or f["shifted_tense"]]
+
+            if filter_word_counts:
+                _ = st.caption("Crutch words and filter-word counts across the manuscript (local scan, no LLM).")
+                _ = st.dataframe(
+                    [{"Term": term, "Count": count} for term, count in list(filter_word_counts.items())[:15]],
+                    use_container_width=True,
+                )
+            if shift_flags:
+                for flag in shift_flags:
+                    prev_flag = pov_tense_flags[flag["chunk_index"] - 1]
+                    details: list[str] = []
+                    if flag["shifted_pov"]:
+                        details.append(f"POV shifted from {prev_flag['dominant_pov']}-person to {flag['dominant_pov']}-person")
+                    if flag["shifted_tense"]:
+                        details.append(f"tense shifted from {prev_flag['dominant_tense']} to {flag['dominant_tense']}")
+                    _ = st.warning(
+                        f"**Section {flag['chunk_index'] + 1}:** possible {' and '.join(details)}. "
+                        "(Heuristic detection — may be an intentional POV/tense change.)"
+                    )
+            if not filter_word_counts and not shift_flags:
+                _ = st.info("No notable filter-word overuse or POV/tense shifts detected.")
+
             # --- WEAKEST SECTION FINDER ---
             _ = st.write("---")
             _ = st.subheader("🔻 Weakest Section")
@@ -336,7 +396,8 @@ if st.button("Analyze Manuscript"):
 
             # --- DOWNLOAD REPORT ---
             report_str = generate_markdown_report(
-                avg_scores, all_results, all_characters, prose_snipers, section_scores
+                avg_scores, all_results, all_characters, prose_snipers, section_scores,
+                filter_word_counts, pov_tense_flags,
             )
             _ = st.download_button(
                 label="📥 Download Full Offline Report",
@@ -405,10 +466,11 @@ if "last_chunks" in st.session_state and st.session_state.get("manuscript_id") =
         else:
             revise_persona: str = st.session_state["last_persona"]
             revise_custom_prompt: str = st.session_state.get("last_custom_prompt", "")
+            revise_genre: str = st.session_state.get("last_genre", "None / General")
             revise_cache_persona = revise_custom_prompt if revise_persona == "Custom" else revise_persona
 
             revise_cache = load_cache()
-            revise_key = _cache_key(revised_text, revise_cache_persona)
+            revise_key = _cache_key(revised_text, revise_cache_persona, revise_genre)
             if revise_key in revise_cache:
                 revised_result: CritiqueResult = revise_cache[revise_key]
             else:
@@ -416,6 +478,7 @@ if "last_chunks" in st.session_state and st.session_state.get("manuscript_id") =
                     revised_text,
                     persona=revise_persona,
                     custom_system_prompt=revise_custom_prompt if revise_persona == "Custom" else None,
+                    genre=revise_genre,
                 )
                 revise_cache[revise_key] = revised_result
                 save_cache(revise_cache)
