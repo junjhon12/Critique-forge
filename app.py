@@ -1,12 +1,15 @@
 import streamlit as st
 import PyPDF2
 import docx
+from datetime import datetime
 from dotenv import load_dotenv
 from typing import TypedDict, cast
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from src.chunker import user_text
 from src.ai_client import analyze_chunk, CritiqueResult, CharacterData, PillarData
 from src.cache import _cache_key, load_cache, save_cache
+from src.history import manuscript_id as _manuscript_id, load_history, append_history
+from src.diff import render_diff_html
 
 _ = load_dotenv()
 
@@ -101,6 +104,7 @@ def generate_markdown_report(
 st.set_page_config(page_title="Critique-Forge AI", layout="wide")
 
 _ = st.sidebar.title("⚙️ Editor Settings")
+manuscript_name: str = st.sidebar.text_input("Manuscript name (for version history)", value="Untitled")
 selected_persona: str = st.sidebar.radio(
     "Choose your editor's tone:",
     ["Ruthless Critic", "Encouraging Mentor", "Grammar & Prose Stickler", "Custom"]
@@ -232,6 +236,20 @@ if st.button("Analyze Manuscript"):
 
             _ = st.success("Grading Complete!")
 
+            # --- PERSIST FOR REVISION WORKFLOW ---
+            current_manuscript_id = _manuscript_id(manuscript_name)
+            append_history(current_manuscript_id, {
+                "timestamp": datetime.now().isoformat(),
+                "persona": cache_persona,
+                "avg_scores": avg_scores,
+                "num_sections": len(chunks),
+            })
+            st.session_state["manuscript_id"] = current_manuscript_id
+            st.session_state["last_chunks"] = chunks
+            st.session_state["last_results"] = all_results
+            st.session_state["last_persona"] = selected_persona
+            st.session_state["last_custom_prompt"] = custom_prompt
+
             # --- TENSION LINE GRAPH ---
             if len(pacing_data["agency"]) > 1:
                 _ = st.subheader("📈 Manuscript Pacing")
@@ -329,3 +347,90 @@ if st.button("Analyze Manuscript"):
 
         except Exception as e:
             _ = st.error(f"An error occurred during grading: {str(e)}")
+
+# --- VERSION HISTORY ---
+history_manuscript_id = _manuscript_id(manuscript_name)
+manuscript_history = load_history(history_manuscript_id)
+if manuscript_history:
+    _ = st.write("---")
+    _ = st.header("📜 Version History")
+    _ = st.caption(f"All past analysis runs logged under manuscript name \"{manuscript_name}\".")
+
+    history_table = [
+        {
+            "Timestamp": entry["timestamp"],
+            "Persona": entry["persona"],
+            "Sections": entry["num_sections"],
+            **{_format_pillar_label(p): entry["avg_scores"].get(p, 0) for p in PILLAR_KEYS},
+        }
+        for entry in manuscript_history
+    ]
+    _ = st.dataframe(history_table, use_container_width=True)
+
+    if len(manuscript_history) > 1:
+        history_pillar_choice: str = st.selectbox(
+            "Chart which pillar across runs?",
+            PILLAR_KEYS,
+            format_func=_format_pillar_label,
+            key="history_pillar_choice",
+        )
+        _ = st.line_chart([entry["avg_scores"].get(history_pillar_choice, 0) for entry in manuscript_history])
+
+# --- REVISE & COMPARE ---
+if "last_chunks" in st.session_state and st.session_state.get("manuscript_id") == history_manuscript_id:
+    _ = st.write("---")
+    _ = st.header("🔁 Revise & Compare")
+    _ = st.caption("Paste a rewritten version of a section to see what changed and whether the scores improved.")
+
+    last_chunks: list[str] = st.session_state["last_chunks"]
+    last_results: list[CritiqueResult] = st.session_state["last_results"]
+
+    revise_section_num: int = st.selectbox(
+        "Which section do you want to revise?",
+        list(range(1, len(last_chunks) + 1)),
+        key="revise_section_num",
+    )
+    revise_idx = revise_section_num - 1
+    original_chunk = last_chunks[revise_idx]
+    original_result = last_results[revise_idx]
+
+    with st.expander("Show original section text"):
+        _ = st.write(original_chunk)
+
+    revised_text: str = st.text_area("Paste your rewritten version of this section:", height=200, key="revised_text")
+
+    if st.button("Re-score & Compare"):
+        if not revised_text.strip():
+            _ = st.error("Paste a rewritten version of the section first.")
+        else:
+            revise_persona: str = st.session_state["last_persona"]
+            revise_custom_prompt: str = st.session_state.get("last_custom_prompt", "")
+            revise_cache_persona = revise_custom_prompt if revise_persona == "Custom" else revise_persona
+
+            revise_cache = load_cache()
+            revise_key = _cache_key(revised_text, revise_cache_persona)
+            if revise_key in revise_cache:
+                revised_result: CritiqueResult = revise_cache[revise_key]
+            else:
+                revised_result = analyze_chunk(
+                    revised_text,
+                    persona=revise_persona,
+                    custom_system_prompt=revise_custom_prompt if revise_persona == "Custom" else None,
+                )
+                revise_cache[revise_key] = revised_result
+                save_cache(revise_cache)
+
+            _ = st.subheader("What changed")
+            _ = st.markdown(render_diff_html(original_chunk, revised_text), unsafe_allow_html=True)
+
+            _ = st.subheader("Score deltas")
+            delta_cols = st.columns(4)
+            for col, pillar in zip(delta_cols, PILLAR_KEYS):
+                old_score = _pillar_data(original_result, pillar).get("score", 0)
+                new_score = _pillar_data(revised_result, pillar).get("score", 0)
+                with col:
+                    _ = st.metric(
+                        label=_format_pillar_label(pillar),
+                        value=new_score,
+                        delta=new_score - old_score,
+                    )
