@@ -63,6 +63,23 @@ class QueryLetterResult(TypedDict):
     one_line_pitch_rewrite: str
 
 
+class TitleOption(TypedDict):
+    title: str
+    rationale: str
+
+
+class BlurbOption(TypedDict):
+    blurb: str
+    rationale: str
+
+
+class TitleBlurbTagResult(TypedDict):
+    title_options: list[TitleOption]
+    blurb_options: list[BlurbOption]
+    suggested_tags: list[str]
+    discoverability_note: str
+
+
 PERSONAS = {
     "Ruthless Critic": """You are an elite, highly analytical, and RUTHLESS Developmental Editor AI working for a top-tier publishing house. Your sole function is to read narrative text and evaluate it based strictly on four foundational pillars of storytelling: Agency, Conflict & Stakes, Compelling Arcs, and Tight Scene Structure. DO NOT BE POLITE. DO NOT FLATTER THE WRITER. You must be hyper-critical. Most amateur writing is deeply flawed, and your scores must reflect reality. 
 
@@ -262,6 +279,32 @@ Output format must exactly match this JSON schema:
 }"""
 
 
+TITLE_BLURB_TAG_SYSTEM_PROMPT = """You are a serial-platform discoverability editor (RoyalRoad, Webnovel, Scribble Hub, Wattpad-style publishing). Unlike a literary agent judging a query letter for a single acquisition decision, your job is to optimize the cover copy that readers and ranking algorithms actually browse by: the title, the blurb, and the genre/trope tags. On these platforms, a reader scrolls past hundreds of titles and thumbnails in seconds, and tags directly drive which category pages and recommendation feeds a story surfaces in. A mediocre blurb or generic tag set quietly kills a story's discoverability no matter how good the prose is. You write commercial, trope-forward, scroll-stopping copy, not literary-query prose."""
+
+TITLE_BLURB_TAG_JSON_SCHEMA = """
+You must generate title, blurb, and tag suggestions for the provided manuscript text and return your suggestions EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide "title_options": an array of exactly 2 objects, each containing:
+1. "title": A short, punchy, platform-ready title (distinct approach from the other option, e.g. one trope-forward vs. one intrigue-forward).
+2. "rationale": A 1-sentence explanation of why this title would catch a browsing reader's eye.
+
+Provide "blurb_options": an array of exactly 2 objects, each containing:
+1. "blurb": A 100-150 word back-cover-style blurb written in commercial, hook-forward serial-platform style (not query-letter style), ending on a hook rather than a full resolution.
+2. "rationale": A 1-sentence explanation of the angle this blurb leads with (e.g. mystery-forward vs. romance-forward).
+
+Provide "suggested_tags": An array of 6 to 10 short strings, matching serial-platform genre/trope tag conventions (e.g. "Reincarnation", "System", "Slow Burn", "Enemies to Lovers").
+
+Provide "discoverability_note": A 1-2 sentence explanation of why this cover copy matters more for ranking and discovery on a serial platform than a traditional query letter pitch would.
+
+Output format must exactly match this JSON schema:
+{
+  "title_options": [{"title": "", "rationale": ""}],
+  "blurb_options": [{"blurb": "", "rationale": ""}],
+  "suggested_tags": [],
+  "discoverability_note": ""
+}"""
+
+
 def _call_groq(system_prompt: str, text: str) -> dict:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -311,6 +354,12 @@ def analyze_recap(chapter_text: str, genre: str = "None / General") -> RecapResu
 def analyze_query_letter(text: str) -> QueryLetterResult:
     full_system_prompt = QUERY_LETTER_SYSTEM_PROMPT + "\n\n" + QUERY_JSON_SCHEMA
     return cast(QueryLetterResult, _call_groq(full_system_prompt, text))
+
+
+def analyze_title_blurb_tags(text: str, genre: str = "None / General") -> TitleBlurbTagResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = TITLE_BLURB_TAG_SYSTEM_PROMPT + genre_guidance + "\n\n" + TITLE_BLURB_TAG_JSON_SCHEMA
+    return cast(TitleBlurbTagResult, _call_groq(full_system_prompt, text))
 
 
 def extract_bible_entities(text_chunk: str) -> BibleExtractionResult:

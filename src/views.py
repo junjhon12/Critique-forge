@@ -5,9 +5,9 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from src.ai_client import (
     analyze_chunk, analyze_hook, analyze_query_letter, analyze_cliffhanger, extract_bible_entities,
-    analyze_recap,
+    analyze_recap, analyze_title_blurb_tags,
     CritiqueResult, CharacterData, HookCritiqueResult, QueryLetterResult, CliffhangerResult,
-    RecapResult,
+    RecapResult, TitleBlurbTagResult,
 )
 from src.consistency import merge_entity, StoryBibleEntry, ConsistencyFlag
 from src.cache import _cache_key, load_cache, save_cache
@@ -25,7 +25,7 @@ from src.file_io import extract_text_from_file, extract_text_from_files
 from src.reports import (
     PILLAR_KEYS, SniperHit, pillar_data, format_pillar_label,
     generate_markdown_report, generate_checklist_report,
-    generate_hook_report, generate_query_letter_report,
+    generate_hook_report, generate_query_letter_report, generate_title_blurb_report,
     ChapterReadinessCheck, build_readiness_checklist,
 )
 
@@ -742,6 +742,63 @@ def render_full_manuscript_mode(
                                 mime="text/markdown",
                                 key="recap_download_button",
                             )
+
+                # --- TITLE / BLURB / TAG A-B SUGGESTIONS (LLM; Web Novel only) ---
+                if is_web_novel:
+                    _ = st.write("---")
+                    _ = st.subheader("🏷️ Title / Blurb / Tag A-B Suggestions")
+                    _ = st.caption(
+                        "On serial platforms, readers browse by title, blurb, and tags, and those tags "
+                        "drive which category pages and recommendation feeds your story surfaces in. "
+                        "This cover copy matters more for discoverability and ranking than a traditional "
+                        "query letter pitch does — so it's worth A/B testing, not just writing once."
+                    )
+
+                    ttag_key = _cache_key(raw_text, "TitleBlurbTag", selected_genre)
+                    if ttag_key in cache:
+                        ttag_result: TitleBlurbTagResult = cache[ttag_key]
+                    else:
+                        ttag_result = analyze_title_blurb_tags(raw_text, genre=selected_genre)
+                        cache[ttag_key] = ttag_result
+                        save_cache(cache)
+
+                    title_options = ttag_result.get("title_options", [])
+                    title_cols = st.columns(2)
+                    for i, col in enumerate(title_cols):
+                        if i < len(title_options):
+                            option = title_options[i]
+                            with col:
+                                _ = st.markdown(f"**Title {chr(65 + i)}:** {option.get('title', '')}")
+                                _ = st.caption(option.get("rationale", ""))
+
+                    blurb_options = ttag_result.get("blurb_options", [])
+                    blurb_cols = st.columns(2)
+                    for i, col in enumerate(blurb_cols):
+                        if i < len(blurb_options):
+                            option = blurb_options[i]
+                            with col:
+                                _ = st.text_area(
+                                    f"Blurb {chr(65 + i)}",
+                                    value=option.get("blurb", ""),
+                                    height=220,
+                                    key=f"title_blurb_output_{i}",
+                                )
+                                _ = st.caption(option.get("rationale", ""))
+
+                    tags = ttag_result.get("suggested_tags", [])
+                    if tags:
+                        _ = st.write(f"**Suggested Tags:** {', '.join(tags)}")
+
+                    _ = st.info(ttag_result.get("discoverability_note", ""))
+
+                    title_blurb_download_str = generate_title_blurb_report(ttag_result)
+                    _ = st.download_button(
+                        label="📥 Download Title/Blurb/Tag Suggestions",
+                        data=title_blurb_download_str,
+                        file_name="CritiqueForge_TitleBlurbTags.md",
+                        mime="text/markdown",
+                        key="title_blurb_download_button",
+                    )
 
                 # --- WEAKEST SECTION FINDER ---
                 _ = st.write("---")

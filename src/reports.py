@@ -288,3 +288,22 @@ def generate_query_letter_report(result: QueryLetterResult) -> str:
         md += f"> *Actionable Tip:* {data.get('actionable_advice', '')}\n\n"
     md += f"## Suggested One-Line Pitch\n\n> {result.get('one_line_pitch_rewrite', '')}\n"
     return md
+
+
+def generate_title_blurb_report(result) -> str:
+    """Generates a short report for the Title / Blurb / Tag A-B suggestions."""
+    md = "# Critique-Forge: Title / Blurb / Tag A-B Suggestions\n\n"
+    md += "## Title Options\n\n"
+    for i, option in enumerate(result.get("title_options", []), start=1):
+        md += f"**Option {chr(64 + i)}:** {option.get('title', '')}\n"
+        md += f"> *Why it works:* {option.get('rationale', '')}\n\n"
+    md += "## Blurb Options\n\n"
+    for i, option in enumerate(result.get("blurb_options", []), start=1):
+        md += f"### Option {chr(64 + i)}\n\n{option.get('blurb', '')}\n\n"
+        md += f"> *Angle:* {option.get('rationale', '')}\n\n"
+    tags = result.get("suggested_tags", [])
+    if tags:
+        md += "## Suggested Tags\n\n"
+        md += ", ".join(tags) + "\n\n"
+    md += f"## Why This Matters\n\n> {result.get('discoverability_note', '')}\n"
+    return md
