@@ -6,8 +6,10 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 from src.ai_client import (
     analyze_chunk, analyze_hook, analyze_query_letter, analyze_cliffhanger, extract_bible_entities,
     analyze_recap, analyze_title_blurb_tags,
+    analyze_addiction_score, analyze_retention_sim, analyze_trope_radar,
     CritiqueResult, CharacterData, HookCritiqueResult, QueryLetterResult, CliffhangerResult,
     RecapResult, TitleBlurbTagResult,
+    AddictionScoreResult, RetentionSimResult, TropeRadarResult,
 )
 from src.consistency import merge_entity, StoryBibleEntry, ConsistencyFlag
 from src.cache import _cache_key, load_cache, save_cache
@@ -18,8 +20,9 @@ from src.structure import (
     detect_scenes, map_beats_to_scenes, analyze_pacing_weight,
     analyze_chapter_length_consistency, check_platform_pacing_conformance,
     detect_stat_blocks, analyze_li_balance,
+    build_arc_tension_curve, detect_arc_health_issues,
     SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag,
-    StatBlockFlag, LIBalanceEntry,
+    StatBlockFlag, LIBalanceEntry, ArcHealthFlag,
     PLATFORM_PACING_RATIONALE,
 )
 from src.chunker import user_text
@@ -28,6 +31,7 @@ from src.reports import (
     PILLAR_KEYS, SniperHit, pillar_data, format_pillar_label,
     generate_markdown_report, generate_checklist_report,
     generate_hook_report, generate_query_letter_report, generate_title_blurb_report,
+    generate_retention_sim_report,
     ChapterReadinessCheck, build_readiness_checklist,
 )
 
@@ -377,6 +381,58 @@ def render_full_manuscript_mode(
                             cache[cliff_key] = cliff_result
                             save_cache(cache)
                         cliffhanger_results[scene["index"]] = cliff_result
+
+                # --- READER ADDICTION SCORE (per scene, LLM; Web Novel only) ---
+                addiction_results: dict[int, AddictionScoreResult] = {}
+                if is_web_novel and len(scenes) >= 1:
+                    words_for_addiction = raw_text.split()
+                    for scene in scenes:
+                        _ = progress_bar.progress(
+                            0.92, text=f"Scoring reader addiction for chapter {scene['index'] + 1} of {len(scenes)}..."
+                        )
+                        start = scene["start_word"]
+                        end = start + scene["word_count"]
+                        chapter_text = " ".join(words_for_addiction[start:end])
+                        if not chapter_text.strip():
+                            continue
+                        addiction_key = _cache_key(chapter_text, "AddictionScore", selected_genre)
+                        if addiction_key in cache:
+                            addiction_result: AddictionScoreResult = cache[addiction_key]
+                        else:
+                            addiction_result = analyze_addiction_score(chapter_text, genre=selected_genre)
+                            cache[addiction_key] = addiction_result
+                            save_cache(cache)
+                        addiction_results[scene["index"]] = addiction_result
+
+                # --- ARC HEALTH (derived from addiction scores or conflict_and_stakes; Web Novel only) ---
+                arc_health_flags: list[ArcHealthFlag] = []
+                if is_web_novel and len(scenes) >= 4:
+                    if addiction_results:
+                        raw_curve = [
+                            addiction_results[s["index"]].get("composite_score", 50)
+                            for s in scenes
+                            if s["index"] in addiction_results
+                        ]
+                    else:
+                        raw_curve = [float(pacing_data["conflict_and_stakes"][i]) for i in range(len(scenes))]
+                    tension_curve = build_arc_tension_curve([float(v) for v in raw_curve])
+                    arc_health_flags = detect_arc_health_issues(tension_curve)
+                else:
+                    tension_curve: list[float] = []
+
+                # --- TROPE RADAR (once on full manuscript; Web Novel only) ---
+                trope_radar_result: TropeRadarResult | None = None
+                if is_web_novel:
+                    words_for_trope = raw_text.split()
+                    trope_excerpt = " ".join(words_for_trope[:1500])
+                    if trope_excerpt.strip():
+                        trope_key = _cache_key(trope_excerpt, "TropeRadar", selected_genre)
+                        if trope_key in cache:
+                            trope_radar_result = cache[trope_key]
+                        else:
+                            trope_radar_result = analyze_trope_radar(trope_excerpt, genre=selected_genre)
+                            cache[trope_key] = trope_radar_result
+                            save_cache(cache)
 
                 readiness_checklist: list[ChapterReadinessCheck] = (
                     build_readiness_checklist(scenes, platform_pacing_flags, cliffhanger_results)
@@ -736,6 +792,116 @@ def render_full_manuscript_mode(
                             use_container_width=True,
                         )
 
+                # --- READER ADDICTION SCORE UI (Web Novel only) ---
+                if is_web_novel and addiction_results:
+                    _ = st.write("---")
+                    with st.expander("🔥 Reader Addiction Score", expanded=False):
+                        _ = st.caption(
+                            "A composite per-chapter engagement score weighted across three moments: "
+                            "Opening Hook (35%), Mid-Chapter Tension (25%), and Closing Cliffhanger (40%). "
+                            "Scores above 70 indicate a chapter that most readers will binge through."
+                        )
+                        _ = st.dataframe(
+                            [
+                                {
+                                    "Chapter": scenes[idx]["heading"] or f"Scene {idx + 1}"
+                                    if idx < len(scenes) else f"Ch.{idx + 1}",
+                                    "Opening Hook": r["opening_hook"].get("score", 0),
+                                    "Mid Tension": r["mid_tension"].get("score", 0),
+                                    "Closing Cliffhanger": r["closing_cliffhanger"].get("score", 0),
+                                    "Composite": r.get("composite_score", 0),
+                                    "Binge-Read?": "✅" if r.get("would_binge_read") else "❌",
+                                }
+                                for idx, r in sorted(addiction_results.items())
+                            ],
+                            use_container_width=True,
+                        )
+                        composite_scores = [
+                            addiction_results[s["index"]].get("composite_score", 0)
+                            for s in scenes
+                            if s["index"] in addiction_results
+                        ]
+                        if len(composite_scores) > 1:
+                            _ = st.write("**Reader Addiction Score Trend**")
+                            _ = st.line_chart(composite_scores)
+                            _ = st.caption(
+                                "A healthy serialized story should maintain composite scores above 60 "
+                                "throughout, with the curve rising toward the end of each arc."
+                            )
+                        for idx, r in sorted(addiction_results.items()):
+                            if not r.get("would_binge_read"):
+                                label = scenes[idx]["heading"] or f"Scene {idx + 1}" if idx < len(scenes) else f"Ch.{idx + 1}"
+                                with st.expander(f"💡 Improve: {label} (Composite {r.get('composite_score', 0)}/100)"):
+                                    for sub, sub_label in [
+                                        ("opening_hook", "Opening Hook"),
+                                        ("mid_tension", "Mid Tension"),
+                                        ("closing_cliffhanger", "Closing Cliffhanger"),
+                                    ]:
+                                        data = r.get(sub, {})
+                                        _ = st.write(f"**{sub_label} ({data.get('score', 0)}/100):** {data.get('analysis', '')}")
+                                        _ = st.info(f"💡 {data.get('actionable_advice', '')}")
+
+                # --- ARC HEALTH DASHBOARD (Web Novel only) ---
+                if is_web_novel and len(scenes) >= 4:
+                    _ = st.write("---")
+                    with st.expander("📊 Arc Health Dashboard", expanded=False):
+                        _ = st.caption(
+                            "Plots the emotional tension arc across all chapters and flags structural issues: "
+                            "sagging middles (low tension in the 30–70% range) and escalation plateaus "
+                            "(flat or declining tension in the second half)."
+                        )
+                        if tension_curve:
+                            _ = st.write("**Tension Curve (smoothed)**")
+                            _ = st.line_chart(tension_curve)
+                            _ = st.caption(
+                                "Derived from Reader Addiction composite scores (or Conflict & Stakes if "
+                                "addiction scoring was not run). A 3-point rolling average is applied."
+                            )
+                        if arc_health_flags:
+                            for flag in arc_health_flags:
+                                icon = "⚠️" if flag["flag_type"] == "sagging_middle" else "📉"
+                                label = "Sagging Middle" if flag["flag_type"] == "sagging_middle" else "Escalation Plateau"
+                                _ = st.warning(
+                                    f"{icon} **{label}** (Chapters {flag['start_chapter']}–{flag['end_chapter']}): "
+                                    f"{flag['description']}"
+                                )
+                        else:
+                            _ = st.success("✅ No arc health issues detected — the tension curve looks healthy.")
+
+                # --- TROPE RADAR (Web Novel only) ---
+                if is_web_novel and trope_radar_result is not None:
+                    _ = st.write("---")
+                    with st.expander("🎯 Trope Radar", expanded=False):
+                        dna = trope_radar_result.get("trope_dna_summary", "")
+                        if dna:
+                            _ = st.info(f"**Trope DNA:** {dna}")
+                        detected = trope_radar_result.get("detected_tropes", [])
+                        if detected:
+                            verdict_icons = {
+                                "Fresh Twist": "✅",
+                                "Standard Execution": "🟡",
+                                "Cliche Risk": "🔴",
+                            }
+                            _ = st.dataframe(
+                                [
+                                    {
+                                        "Trope": t.get("trope_name", ""),
+                                        "Verdict": f"{verdict_icons.get(t.get('freshness_verdict', ''), '')} {t.get('freshness_verdict', '')}",
+                                        "Evidence": t.get("evidence", ""),
+                                        "Suggestion": t.get("suggestion", "") or "—",
+                                    }
+                                    for t in detected
+                                ],
+                                use_container_width=True,
+                            )
+                            for t in detected:
+                                if t.get("freshness_verdict") == "Cliche Risk" and t.get("suggestion"):
+                                    _ = st.warning(
+                                        f"🔴 **{t.get('trope_name', '')} — Cliché Risk:** {t.get('suggestion', '')}"
+                                    )
+                        else:
+                            _ = st.info("No dominant web fiction tropes detected in the opening excerpt.")
+
                 # --- RECAP / "PREVIOUSLY ON..." GENERATOR (LLM; Web Novel only) ---
                 if is_web_novel and len(scenes) >= 1:
                     _ = st.write("---")
@@ -919,6 +1085,9 @@ def render_full_manuscript_mode(
                     platform_pacing_flags, readiness_checklist,
                     story_bible, consistency_flags,
                     platform_name=platform_name,
+                    addiction_results=addiction_results if is_web_novel else None,
+                    arc_health_flags=arc_health_flags if is_web_novel else None,
+                    trope_radar_result=trope_radar_result if is_web_novel else None,
                 )
                 _ = st.download_button(
                     label="📥 Download Full Offline Report",
@@ -1026,3 +1195,87 @@ def render_full_manuscript_mode(
                             value=new_score,
                             delta=new_score - old_score,
                         )
+
+
+def render_retention_sim_mode(manuscript_name: str, selected_genre: str) -> None:
+    _ = st.markdown(
+        "Upload or paste your **Chapter One** to simulate whether an impatient web novel reader "
+        "would click 'Next Chapter' or abandon your story."
+    )
+
+    uploaded_file: UploadedFile | None = st.file_uploader(
+        "Import Chapter One here", type=["txt", "md", "pdf", "docx"]
+    )
+    text_input: str = st.text_area("Or paste Chapter One here:", height=300)
+
+    if st.button("Simulate Reader Reaction"):
+        raw_text: str = ""
+        if uploaded_file is not None:
+            try:
+                raw_text = extract_text_from_file(uploaded_file)
+            except Exception as e:
+                _ = st.error(f"Error reading file: {e}")
+        elif text_input.strip():
+            raw_text = text_input
+
+        if not raw_text:
+            _ = st.error("Please upload a file or paste Chapter One to analyze.")
+        else:
+            try:
+                retention_cache = load_cache()
+                retention_key = _cache_key(raw_text, "RetentionSim", selected_genre)
+                if retention_key in retention_cache:
+                    retention_result: RetentionSimResult = retention_cache[retention_key]
+                else:
+                    retention_result = analyze_retention_sim(raw_text, genre=selected_genre)
+                    retention_cache[retention_key] = retention_result
+                    save_cache(retention_cache)
+
+                _ = st.success("Analysis Complete!")
+
+                if retention_result.get("would_click_next"):
+                    _ = st.success("✅ **This chapter would earn a 'Next Chapter' click.**")
+                else:
+                    _ = st.error("❌ **This chapter would be abandoned by a platform reader.**")
+
+                for pillar, label in [
+                    ("platform_hook", "Platform Hook — Genre/Trope Signal"),
+                    ("protagonist_pull", "Protagonist Pull"),
+                    ("pacing_first_page", "Pacing — First Chapter"),
+                ]:
+                    data = retention_result.get(pillar, {})
+                    _ = st.subheader(f"{label} ({data.get('score', 0)}/100)")
+                    _ = st.progress(data.get("score", 0))
+                    _ = st.write(f"**Analysis:** {data.get('analysis', '')}")
+                    _ = st.write(f"**Actionable Tip:** {data.get('actionable_advice', '')}")
+
+                notes = retention_result.get("platform_reader_notes", [])
+                if notes:
+                    _ = st.write("---")
+                    _ = st.subheader("Platform Reader Notes")
+                    for note in notes:
+                        _ = st.info(note)
+
+                append_history(
+                    _manuscript_id(manuscript_name),
+                    {
+                        "timestamp": datetime.now().isoformat(),
+                        "persona": "Chapter One Retention Simulator",
+                        "genre": selected_genre,
+                        "avg_scores": {
+                            "agency": 0, "conflict_and_stakes": 0,
+                            "compelling_arcs": 0, "tight_scene_structure": 0,
+                        },
+                        "num_sections": 1,
+                    },
+                )
+
+                retention_report_str = generate_retention_sim_report(retention_result)
+                _ = st.download_button(
+                    label="📥 Download Retention Sim Report",
+                    data=retention_report_str,
+                    file_name="CritiqueForge_RetentionSim_Report.md",
+                    mime="text/markdown",
+                )
+            except Exception as e:
+                _ = st.error(f"An error occurred during analysis: {str(e)}")

@@ -80,6 +80,36 @@ class TitleBlurbTagResult(TypedDict):
     discoverability_note: str
 
 
+# --- PILLAR 1: ENGAGEMENT & READER RETENTION ---
+
+class AddictionScoreResult(TypedDict):
+    opening_hook: PillarData
+    mid_tension: PillarData
+    closing_cliffhanger: PillarData
+    composite_score: int
+    would_binge_read: bool
+
+
+class RetentionSimResult(TypedDict):
+    platform_hook: PillarData
+    protagonist_pull: PillarData
+    pacing_first_page: PillarData
+    would_click_next: bool
+    platform_reader_notes: list[str]
+
+
+class TropeEntry(TypedDict):
+    trope_name: str
+    freshness_verdict: str
+    evidence: str
+    suggestion: str
+
+
+class TropeRadarResult(TypedDict):
+    detected_tropes: list[TropeEntry]
+    trope_dna_summary: str
+
+
 PERSONAS = {
     "Ruthless Critic": """You are an elite, highly analytical, and RUTHLESS Developmental Editor AI working for a top-tier publishing house. Your sole function is to read narrative text and evaluate it based strictly on four foundational pillars of storytelling: Agency, Conflict & Stakes, Compelling Arcs, and Tight Scene Structure. DO NOT BE POLITE. DO NOT FLATTER THE WRITER. You must be hyper-critical. Most amateur writing is deeply flawed, and your scores must reflect reality. 
 
@@ -288,6 +318,113 @@ Output format must exactly match this JSON schema:
 }"""
 
 
+ADDICTION_SYSTEM_PROMPT = """You are an obsessive binge-reader of web fiction who has burned through hundreds of serialized novels on RoyalRoad, Webnovel, and Scribble Hub. You are evaluating a SINGLE CHAPTER of a web novel across three moments that determine whether a reader gets hooked and keeps reading: the opening hook (first ~200 words), the mid-chapter tension (the middle portion of the chapter), and the closing cliffhanger (the final passage). Your only question at each moment is: does this keep a reader reading RIGHT NOW, or do they put it down? You are direct, impatient, and ruthless about slow openings, flat middles, and weak endings that give a reader an exit ramp."""
+
+ADDICTION_SCORE_JSON_SCHEMA = """
+You must evaluate the provided chapter and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide an "opening_hook" object for the chapter's opening (~first 200 words) containing:
+1. "score": An integer from 0 to 100 for how strongly the opening pulls a reader in.
+2. "analysis": A 2-3 sentence assessment of what is or isn't earning attention in the opening lines.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to strengthen the opening hook.
+
+Provide a "mid_tension" object for the chapter's middle section containing:
+1. "score": An integer from 0 to 100 for how well the middle maintains tension and momentum.
+2. "analysis": A 2-3 sentence assessment of whether the middle sustains engagement or loses it.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to raise mid-chapter tension.
+
+Provide a "closing_cliffhanger" object for the chapter's ending containing:
+1. "score": An integer from 0 to 100 for how strongly the ending pulls a reader to the next chapter.
+2. "analysis": A 2-3 sentence assessment of what is or isn't creating pull at the end.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to strengthen the closing hook.
+
+Provide "composite_score": a single integer from 0 to 100 representing the chapter's overall reader-addiction strength. This is NOT a simple average — weight the closing cliffhanger most heavily (40%), the opening hook second (35%), and the mid-tension least (25%), since endings drive return-visit behaviour most strongly.
+
+Provide "would_binge_read": a boolean, true only if a binge-reading platform reader would immediately continue to the next chapter without putting the novel down.
+
+Output format must exactly match this JSON schema:
+{
+  "opening_hook": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "mid_tension": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "closing_cliffhanger": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "composite_score": 0,
+  "would_binge_read": false
+}"""
+
+
+RETENTION_SIM_SYSTEM_PROMPT = """You are an impatient web novel reader with 50 other stories in your reading list. You are deciding in the next 2 minutes — based only on Chapter One — whether this novel earns a place in your regular reading rotation or gets abandoned. You do not care about literary merit, prose elegance, or traditional publishing standards. You care about three things: (1) does this chapter signal the genre and tropes you came for within the first few paragraphs, (2) is the main character immediately interesting enough that you want to follow them through a 300-chapter serialized story, and (3) does SOMETHING HAPPEN fast enough that you are not bored before the chapter ends. You are blunt about slow chapter-one openers that bury the hook, generic protagonists with no personality, and chapters that spend more time on world-building than on putting the character in a situation that matters."""
+
+RETENTION_SIM_JSON_SCHEMA = """
+You must evaluate the provided opening chapter and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide a "platform_hook" object containing:
+1. "score": An integer from 0 to 100 for how clearly and quickly this chapter signals its genre, tropes, and premise to a browsing reader.
+2. "analysis": A 2-3 sentence assessment of how well the chapter establishes its genre/trope identity and hooks the right reader.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to make the genre/trope signal stronger and faster.
+
+Provide a "protagonist_pull" object containing:
+1. "score": An integer from 0 to 100 for how immediately compelling and distinct the main character feels.
+2. "analysis": A 2-3 sentence assessment of whether the protagonist has a voice, personality, or situation that makes a reader want to follow them through hundreds of chapters.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to make the protagonist more immediately gripping.
+
+Provide a "pacing_first_page" object containing:
+1. "score": An integer from 0 to 100 for how quickly the chapter gets to a situation that matters — action, conflict, tension, or a compelling question.
+2. "analysis": A 2-3 sentence assessment of the chapter's pacing from a serial-reader's perspective.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to front-load more urgency or conflict.
+
+Provide "would_click_next": a boolean, true only if this chapter would earn a "Next Chapter" click from an impatient web novel reader.
+
+Provide "platform_reader_notes": an array of short strings (up to 5), each a concrete, specific observation about what a platform reader would respond to positively or negatively — grounded in specific moments or lines from the chapter. Empty array if none.
+
+Output format must exactly match this JSON schema:
+{
+  "platform_hook": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "protagonist_pull": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "pacing_first_page": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "would_click_next": false,
+  "platform_reader_notes": []
+}"""
+
+
+TROPE_RADAR_SYSTEM_PROMPT = """You are an experienced web fiction editor who has read over 10,000 serialized web novels across RoyalRoad, Webnovel, Scribble Hub, and Wattpad. You know every trope, sub-trope, and trope combination cold. You are scanning a manuscript excerpt to identify which web fiction tropes are present, and to evaluate whether each is executed with a fresh twist, executed competently but conventionally, or executed as a stale cliché that has been done to death without any distinguishing angle. You only report tropes that are actually evidenced in the provided text — do not invent or assume tropes that are not demonstrated. When a trope is present, cite a specific passage or detail as evidence. When a trope is a cliché risk, give a concrete suggestion for how to freshen it."""
+
+TROPE_RADAR_JSON_SCHEMA = """
+You must scan the provided text for web fiction tropes and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Scan for tropes in these categories (but only report ones actually present in the text):
+- Reincarnation / Second Life / Regression
+- Isekai / Truck-kun / World Transfer
+- System Awakening / Status Window / Gamer
+- Dungeon Diving / Dungeon Discovery
+- Cultivation / Qi Cultivation / Martial Arts Ranks
+- Villain Protagonist / Second Chance Villain
+- Hidden Power / Weak-to-Strong Protagonist
+- Harem / Reverse Harem / Accidental Romance
+- Tournament Arc / Competition Arc
+- Cheat Skill / Broken Ability / God-Given Power
+- Lone Wolf / Outcast Protagonist
+- Magic Academy / School Setting
+- Apocalypse / Survival / Monster Invasion
+- Transmigration into Novel / Game World
+- Overpowered Protagonist / One-Punch Fantasy
+
+Provide "detected_tropes": an array of objects, one per detected trope, each containing:
+1. "trope_name": The name of the detected trope (use the category names above or a more specific variant).
+2. "freshness_verdict": Exactly one of "Fresh Twist", "Standard Execution", or "Cliche Risk".
+3. "evidence": A short quote or specific scene detail from the text that demonstrates this trope is present.
+4. "suggestion": If freshness_verdict is "Cliche Risk", a concrete 1-2 sentence suggestion for how to freshen the execution. If "Fresh Twist" or "Standard Execution", an empty string.
+
+Provide "trope_dna_summary": a single string summarizing the manuscript's trope combination in a punchy, platform-reader-facing way (e.g. "Isekai + System Awakening + Villain Protagonist" or "Cultivation + Hidden Power + Tournament Arc"). If no tropes are detected, return "No dominant web fiction tropes detected."
+
+Output format must exactly match this JSON schema:
+{
+  "detected_tropes": [
+    {"trope_name": "", "freshness_verdict": "", "evidence": "", "suggestion": ""}
+  ],
+  "trope_dna_summary": ""
+}"""
+
+
 TITLE_BLURB_TAG_SYSTEM_PROMPT = """You are a serial-platform discoverability editor (RoyalRoad, Webnovel, Scribble Hub, Wattpad-style publishing). Unlike a literary agent judging a query letter for a single acquisition decision, your job is to optimize the cover copy that readers and ranking algorithms actually browse by: the title, the blurb, and the genre/trope tags. On these platforms, a reader scrolls past hundreds of titles and thumbnails in seconds, and tags directly drive which category pages and recommendation feeds a story surfaces in. A mediocre blurb or generic tag set quietly kills a story's discoverability no matter how good the prose is. You write commercial, trope-forward, scroll-stopping copy, not literary-query prose."""
 
 TITLE_BLURB_TAG_JSON_SCHEMA = """
@@ -374,6 +511,24 @@ def analyze_title_blurb_tags(text: str, genre: str = "None / General") -> TitleB
 def extract_bible_entities(text_chunk: str) -> BibleExtractionResult:
     full_system_prompt = CONSISTENCY_SYSTEM_PROMPT + "\n\n" + CONSISTENCY_JSON_SCHEMA
     return cast(BibleExtractionResult, _call_groq(full_system_prompt, text_chunk))
+
+
+def analyze_addiction_score(chapter_text: str, genre: str = "None / General") -> AddictionScoreResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = ADDICTION_SYSTEM_PROMPT + genre_guidance + "\n\n" + ADDICTION_SCORE_JSON_SCHEMA
+    return cast(AddictionScoreResult, _call_groq(full_system_prompt, chapter_text))
+
+
+def analyze_retention_sim(chapter_text: str, genre: str = "None / General") -> RetentionSimResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = RETENTION_SIM_SYSTEM_PROMPT + genre_guidance + "\n\n" + RETENTION_SIM_JSON_SCHEMA
+    return cast(RetentionSimResult, _call_groq(full_system_prompt, chapter_text))
+
+
+def analyze_trope_radar(manuscript_excerpt: str, genre: str = "None / General") -> TropeRadarResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = TROPE_RADAR_SYSTEM_PROMPT + genre_guidance + "\n\n" + TROPE_RADAR_JSON_SCHEMA
+    return cast(TropeRadarResult, _call_groq(full_system_prompt, manuscript_excerpt))
 
 
 def analyze_chunk(

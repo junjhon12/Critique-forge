@@ -476,3 +476,90 @@ def analyze_li_balance(
             "flag": flag,
         })
     return entries
+
+
+# --- PILLAR 1: ARC HEALTH ---
+
+class ArcHealthFlag(TypedDict):
+    flag_type: str   # "sagging_middle" | "escalation_plateau"
+    start_chapter: int
+    end_chapter: int
+    description: str
+
+
+def build_arc_tension_curve(chapter_scores: list[float]) -> list[float]:
+    """Applies a 3-point rolling average to smooth per-chapter scores into a tension curve."""
+    if len(chapter_scores) < 3:
+        return list(chapter_scores)
+    smoothed: list[float] = []
+    for i in range(len(chapter_scores)):
+        start = max(0, i - 1)
+        end = min(len(chapter_scores), i + 2)
+        smoothed.append(sum(chapter_scores[start:end]) / (end - start))
+    return smoothed
+
+
+def detect_arc_health_issues(tension_curve: list[float]) -> list[ArcHealthFlag]:
+    """Detects sagging middles and escalation plateaus from a smoothed tension curve."""
+    flags: list[ArcHealthFlag] = []
+    n = len(tension_curve)
+    if n < 4:
+        return flags
+
+    mean = statistics.mean(tension_curve)
+    try:
+        stdev = statistics.stdev(tension_curve)
+    except statistics.StatisticsError:
+        stdev = 0.0
+
+    # --- SAGGING MIDDLE: chapters in the 30-70% range below (mean - 1 stdev) ---
+    mid_start = max(0, int(n * 0.30))
+    mid_end = min(n, int(n * 0.70))
+    sag_threshold = mean - stdev
+    sag_indices = [
+        i for i in range(mid_start, mid_end)
+        if tension_curve[i] < sag_threshold
+    ]
+    if sag_indices:
+        flags.append({
+            "flag_type": "sagging_middle",
+            "start_chapter": sag_indices[0] + 1,
+            "end_chapter": sag_indices[-1] + 1,
+            "description": (
+                f"Chapters {sag_indices[0] + 1}–{sag_indices[-1] + 1} "
+                f"({len(sag_indices)} chapter(s) in the 30–70% range) scored below the manuscript "
+                f"mean tension by more than one standard deviation. This is a classic sagging middle — "
+                "raise the stakes or introduce a new complication in this stretch."
+            ),
+        })
+
+    # --- ESCALATION PLATEAU: 3+ consecutive chapters post-midpoint with flat/declining tension ---
+    post_mid_start = int(n * 0.50)
+    longest_streak: list[int] = []
+    current_streak: list[int] = []
+    for i in range(post_mid_start + 1, n):
+        if tension_curve[i] <= tension_curve[i - 1]:
+            if not current_streak:
+                current_streak = [i - 1]
+            current_streak.append(i)
+        else:
+            if len(current_streak) >= 3 and len(current_streak) > len(longest_streak):
+                longest_streak = current_streak
+            current_streak = []
+    if len(current_streak) >= 3 and len(current_streak) > len(longest_streak):
+        longest_streak = current_streak
+
+    if longest_streak:
+        flags.append({
+            "flag_type": "escalation_plateau",
+            "start_chapter": longest_streak[0] + 1,
+            "end_chapter": longest_streak[-1] + 1,
+            "description": (
+                f"Chapters {longest_streak[0] + 1}–{longest_streak[-1] + 1} show "
+                f"{len(longest_streak)} consecutive chapters of flat or declining tension after the midpoint. "
+                "Escalation should be climbing in the second half — consider raising the threat level, "
+                "revealing a new antagonist angle, or compressing a quiet arc."
+            ),
+        })
+
+    return flags

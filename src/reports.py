@@ -1,9 +1,12 @@
 from typing import TypedDict, cast
 
-from src.ai_client import CritiqueResult, CharacterData, PillarData, HookCritiqueResult, QueryLetterResult, CliffhangerResult
+from src.ai_client import (
+    CritiqueResult, CharacterData, PillarData, HookCritiqueResult, QueryLetterResult,
+    CliffhangerResult, AddictionScoreResult, RetentionSimResult, TropeRadarResult,
+)
 from src.structure import (
     SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag,
-    PLATFORM_PACING_RATIONALE,
+    ArcHealthFlag, PLATFORM_PACING_RATIONALE,
 )
 from src.style_audit import PovTenseFlag
 from src.consistency import StoryBibleEntry, ConsistencyFlag
@@ -84,6 +87,9 @@ def generate_markdown_report(
     story_bible: dict[str, StoryBibleEntry] | None = None,
     consistency_flags: list[ConsistencyFlag] | None = None,
     platform_name: str = "None",
+    addiction_results: dict[int, AddictionScoreResult] | None = None,
+    arc_health_flags: list[ArcHealthFlag] | None = None,
+    trope_radar_result: TropeRadarResult | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -189,6 +195,49 @@ def generate_markdown_report(
             if details:
                 md += f" ({'; '.join(details)})"
             md += "\n"
+        md += "\n"
+
+    # --- READER ADDICTION SCORE ---
+    if addiction_results:
+        md += "---\n## 🔥 Reader Addiction Score\n\n"
+        md += "| Chapter | Opening Hook | Mid Tension | Closing Cliffhanger | Composite | Binge-Read? |\n"
+        md += "|---------|-------------|------------|--------------------|-----------|-----------|\n"
+        for idx in sorted(addiction_results):
+            r = addiction_results[idx]
+            md += (
+                f"| Ch.{idx + 1} "
+                f"| {r['opening_hook'].get('score', 0)}/100 "
+                f"| {r['mid_tension'].get('score', 0)}/100 "
+                f"| {r['closing_cliffhanger'].get('score', 0)}/100 "
+                f"| **{r.get('composite_score', 0)}/100** "
+                f"| {'✅' if r.get('would_binge_read') else '❌'} |\n"
+            )
+        md += "\n"
+
+    # --- ARC HEALTH DASHBOARD ---
+    if arc_health_flags:
+        md += "---\n## 📊 Arc Health Dashboard\n\n"
+        for flag in arc_health_flags:
+            icon = "⚠️" if flag["flag_type"] == "sagging_middle" else "📉"
+            label = "Sagging Middle" if flag["flag_type"] == "sagging_middle" else "Escalation Plateau"
+            md += f"**{icon} {label} (Chapters {flag['start_chapter']}–{flag['end_chapter']}):**\n\n"
+            md += f"> {flag['description']}\n\n"
+
+    # --- TROPE RADAR ---
+    if trope_radar_result and trope_radar_result.get("detected_tropes"):
+        md += "---\n## 🎯 Trope Radar\n\n"
+        md += f"**Trope DNA:** {trope_radar_result.get('trope_dna_summary', '')}\n\n"
+        md += "| Trope | Verdict | Evidence | Suggestion |\n"
+        md += "|-------|---------|----------|------------|\n"
+        verdict_icons = {"Fresh Twist": "✅", "Standard Execution": "🟡", "Cliche Risk": "🔴"}
+        for trope in trope_radar_result.get("detected_tropes", []):
+            icon = verdict_icons.get(trope.get("freshness_verdict", ""), "")
+            md += (
+                f"| {trope.get('trope_name', '')} "
+                f"| {icon} {trope.get('freshness_verdict', '')} "
+                f"| {trope.get('evidence', '')} "
+                f"| {trope.get('suggestion', '') or '—'} |\n"
+            )
         md += "\n"
 
     # --- STORY BIBLE & CONSISTENCY CHECK ---
@@ -306,4 +355,27 @@ def generate_title_blurb_report(result) -> str:
         md += "## Suggested Tags\n\n"
         md += ", ".join(tags) + "\n\n"
     md += f"## Why This Matters\n\n> {result.get('discoverability_note', '')}\n"
+    return md
+
+
+def generate_retention_sim_report(result: RetentionSimResult) -> str:
+    """Generates a short report for the Chapter One Retention Simulator."""
+    md = "# Critique-Forge: Chapter One Retention Simulator\n\n"
+    verdict = "✅ **This chapter would earn a 'Next Chapter' click.**" if result.get("would_click_next") else "❌ **This chapter would be abandoned by a platform reader.**"
+    md += f"**Verdict:** {verdict}\n\n"
+    for pillar, label in [
+        ("platform_hook", "Platform Hook (Genre/Trope Signal)"),
+        ("protagonist_pull", "Protagonist Pull"),
+        ("pacing_first_page", "Pacing — First Chapter"),
+    ]:
+        data = result.get(pillar, {})
+        md += f"## {label} ({data.get('score', 0)}/100)\n"
+        md += f"> *Analysis:* {data.get('analysis', '')}\n>\n"
+        md += f"> *Actionable Tip:* {data.get('actionable_advice', '')}\n\n"
+    notes = result.get("platform_reader_notes", [])
+    if notes:
+        md += "## Platform Reader Notes\n\n"
+        for note in notes:
+            md += f"- {note}\n"
+        md += "\n"
     return md

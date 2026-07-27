@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 from src.ai_client import GENRE_PRESETS
 from src.structure import STRUCTURE_TEMPLATES, PLATFORM_WORD_COUNT_NORMS
-from src.views import render_query_letter_mode, render_agent_read_mode, render_full_manuscript_mode
+from src.views import render_query_letter_mode, render_agent_read_mode, render_full_manuscript_mode, render_retention_sim_mode
 
 _ = load_dotenv()
 
@@ -22,7 +22,7 @@ writing_for: str = st.sidebar.radio(
 _is_web_novel_track = writing_for == "Web Novel / Serial"
 
 _mode_options = (
-    ["Full Manuscript"]
+    ["Full Manuscript", "Chapter One Retention Simulator"]
     if _is_web_novel_track
     else ["Full Manuscript", "Query Letter / Synopsis", "Read Like an Agent (First Page)"]
 )
@@ -86,6 +86,8 @@ if analysis_mode == "Full Manuscript":
             li_names = [n.strip() for n in li_names_raw.split(",") if n.strip()]
 elif analysis_mode == "Read Like an Agent (First Page)":
     selected_genre = st.sidebar.selectbox("Genre / format:", list(GENRE_PRESETS.keys()))
+elif analysis_mode == "Chapter One Retention Simulator":
+    selected_genre = st.sidebar.selectbox("Genre / format:", _web_novel_genres)
 
 # --- MAIN UI ---
 _ = st.title("Critique-Forge AI: Developmental Editor")
@@ -94,6 +96,8 @@ if analysis_mode == "Query Letter / Synopsis":
     render_query_letter_mode()
 elif analysis_mode == "Read Like an Agent (First Page)":
     render_agent_read_mode(manuscript_name, selected_genre)
+elif analysis_mode == "Chapter One Retention Simulator":
+    render_retention_sim_mode(manuscript_name, selected_genre)
 else:
     render_full_manuscript_mode(
         manuscript_name, selected_persona, custom_prompt, selected_genre, selected_structure_template,

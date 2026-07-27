@@ -12,18 +12,38 @@ Critique-Forge is a Streamlit app that acts as an AI developmental editor for fi
 
 ## Setup
 
-1. Install dependencies:
+1. Create and activate a virtual environment:
+   ```powershell
+   python -m venv venv
+   .\venv\Scripts\Activate.ps1
    ```
+   On macOS/Linux use `source venv/bin/activate` instead.
+
+   > **Troubleshooting (Windows):**
+   >
+   > - **"not recognized as the name of a cmdlet"** — The `venv` folder doesn't exist yet. Make sure you ran `python -m venv venv` first.
+   > - **"running scripts is disabled on this system"** — PowerShell's execution policy is blocking the script. Run this once, then retry activation:
+   >   ```powershell
+   >   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+   >   ```
+
+2. Install dependencies into the activated venv:
+   ```powershell
    pip install -r requirements.txt
    ```
-2. Copy `.env.example` to `.env` and add your [Groq API key](https://console.groq.com/keys):
+
+3. Copy `.env.example` to `.env` and add your [Groq API key](https://console.groq.com/keys):
+   ```powershell
+   Copy-Item .env.example .env
    ```
-   GROQ_API_KEY=your_groq_api_key_here
-   ```
+   Then open `.env` and replace `your_groq_api_key_here` with your actual key.
 
 ## Usage
 
-```
+Make sure the virtual environment is active (your prompt should show `(venv)`) before running the app:
+
+```powershell
+.\venv\Scripts\Activate.ps1   # skip if already active
 streamlit run app.py
 ```
 
