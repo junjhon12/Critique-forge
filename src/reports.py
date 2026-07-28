@@ -4,6 +4,7 @@ from src.ai_client import (
     CritiqueResult, CharacterData, PillarData, HookCritiqueResult, QueryLetterResult,
     CliffhangerResult, AddictionScoreResult, RetentionSimResult, TropeRadarResult,
     DialogueQualityResult, CharacterArcSnapshotResult, SecondaryCharUtilResult, AgencyDeepDiveResult,
+    ProseDepthResult,
 )
 from src.structure import (
     SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag,
@@ -95,6 +96,7 @@ def generate_markdown_report(
     arc_continuity_results: dict[int, CharacterArcSnapshotResult] | None = None,
     secondary_char_util: SecondaryCharUtilResult | None = None,
     agency_deep_dive_results: dict[int, AgencyDeepDiveResult] | None = None,
+    prose_depth_results: dict[int, ProseDepthResult] | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -385,6 +387,128 @@ def generate_markdown_report(
                 md += f"  - *Tip:* {gc.get('actionable_advice', '')}\n"
                 md += f"- **Consequence Weight ({cw.get('score', 0)}/100):** {cw.get('analysis', '')}\n"
                 md += f"  - *Tip:* {cw.get('actionable_advice', '')}\n\n"
+
+    # --- PROSE ELEGANCE AUDIT ---
+    if prose_depth_results:
+        md += "---\n## ✍️ Prose Elegance Audit\n\n"
+        md += "| Section | Rhythm Variety | Passive Voice | Adverb Density | Composite |\n"
+        md += "|---------|---------------|--------------|----------------|----------|\n"
+        weakest_pe_idx = min(prose_depth_results, key=lambda i: prose_depth_results[i].get("prose_elegance", {}).get("composite_score", 100))  # type: ignore[arg-type]
+        for idx in sorted(prose_depth_results):
+            pe = prose_depth_results[idx].get("prose_elegance", {})
+            md += (
+                f"| Section {idx + 1} "
+                f"| {pe.get('rhythm_variety', {}).get('score', 0)}/100 "
+                f"| {pe.get('passive_voice_score', {}).get('score', 0)}/100 "
+                f"| {pe.get('adverb_density_score', {}).get('score', 0)}/100 "
+                f"| {pe.get('composite_score', 0)}/100 |\n"
+            )
+        md += "\n"
+        weakest_pe = prose_depth_results[weakest_pe_idx].get("prose_elegance", {})
+        md += f"### Weakest Section — Section {weakest_pe_idx + 1} (Composite: {weakest_pe.get('composite_score', 0)}/100)\n\n"
+        for sub_key, sub_label in [("rhythm_variety", "Rhythm Variety"), ("passive_voice_score", "Passive Voice"), ("adverb_density_score", "Adverb Density")]:
+            sub = weakest_pe.get(sub_key, {})
+            md += f"**{sub_label} ({sub.get('score', 0)}/100):** {sub.get('analysis', '')}\n"
+            md += f"- *Tip:* {sub.get('actionable_advice', '')}\n"
+        weak_passages = weakest_pe.get("weak_passages", [])
+        if weak_passages:
+            md += "\n**Weakest Passages:**\n"
+            for p in weak_passages:
+                md += f'- "{p}"\n'
+        md += "\n"
+
+    # --- SHOW-DON'T-TELL DEEP-DIVE ---
+    if prose_depth_results:
+        md += "---\n## 🔍 Show-Don't-Tell Deep-Dive\n\n"
+        md += "| Section | Compliance | Told % | Emotion Tells | Action Tells | Thought Tells |\n"
+        md += "|---------|-----------|--------|--------------|-------------|---------------|\n"
+        weakest_sdt_idx = min(prose_depth_results, key=lambda i: prose_depth_results[i].get("show_dont_tell", {}).get("compliance_score", 100))  # type: ignore[arg-type]
+        for idx in sorted(prose_depth_results):
+            sdt = prose_depth_results[idx].get("show_dont_tell", {})
+            md += (
+                f"| Section {idx + 1} "
+                f"| {sdt.get('compliance_score', 0)}/100 "
+                f"| {sdt.get('told_percentage', 0)}% "
+                f"| {sdt.get('emotion_tells', 0)} "
+                f"| {sdt.get('action_tells', 0)} "
+                f"| {sdt.get('thought_tells', 0)} |\n"
+            )
+        md += "\n"
+        weakest_sdt = prose_depth_results[weakest_sdt_idx].get("show_dont_tell", {})
+        violations = weakest_sdt.get("worst_violations", [])
+        if violations:
+            category_labels = {"emotion_telling": "💙 Emotion", "action_telling": "🟠 Action", "thought_telling": "💜 Thought"}
+            severity_stars = {1: "★", 2: "★★", 3: "★★★"}
+            md += f"### Worst Violations — Section {weakest_sdt_idx + 1} (Compliance: {weakest_sdt.get('compliance_score', 0)}/100)\n\n"
+            for v in violations:
+                cat_label = category_labels.get(v.get("category", ""), v.get("category", ""))
+                stars = severity_stars.get(v.get("severity", 1), "★")
+                md += f'- **{cat_label}** {stars}: "{v.get("passage", "")}"\n'
+        md += "\n"
+
+    # --- SENSORY DETAIL DENSITY ---
+    if prose_depth_results:
+        md += "---\n## 🌿 Sensory Detail Density\n\n"
+        md += "| Section | Sight | Sound | Smell | Touch | Taste | Immersion |\n"
+        md += "|---------|-------|-------|-------|-------|-------|----------|\n"
+        for idx in sorted(prose_depth_results):
+            sd = prose_depth_results[idx].get("sensory_density", {})
+            md += (
+                f"| Section {idx + 1} "
+                f"| {sd.get('sight_score', 0)}/100 "
+                f"| {sd.get('sound_score', 0)}/100 "
+                f"| {sd.get('smell_score', 0)}/100 "
+                f"| {sd.get('touch_score', 0)}/100 "
+                f"| {sd.get('taste_score', 0)}/100 "
+                f"| {sd.get('immersion_score', 0)}/100 |\n"
+            )
+        md += "\n"
+        # Chronic blind spots
+        sense_keys = ["sight", "sound", "smell", "touch", "taste"]
+        n_sections = len(prose_depth_results)
+        chronic = [
+            sense for sense in sense_keys
+            if sum(1 for r in prose_depth_results.values() if r.get("sensory_density", {}).get(f"{sense}_score", 0) < 20) >= (n_sections / 2)
+        ]
+        if chronic:
+            md += f"**⚠️ Chronic Blind Spots:** {', '.join(s.title() for s in chronic)}\n\n"
+        # Strongest passages
+        md += "**Strongest Sensory Passages:**\n"
+        for idx in sorted(prose_depth_results):
+            sd = prose_depth_results[idx].get("sensory_density", {})
+            sp = sd.get("strongest_passage", "")
+            if sp:
+                md += f'- Section {idx + 1}: "{sp}"\n'
+        md += "\n"
+
+    # --- READABILITY & CLARITY ---
+    if prose_depth_results:
+        md += "---\n## 📖 Readability & Clarity\n\n"
+        md += "| Section | Sentence Complexity | Clarity | Jargon/Opacity | Composite |\n"
+        md += "|---------|--------------------|---------|--------------|-----------|\n"
+        weakest_rb_idx = min(prose_depth_results, key=lambda i: prose_depth_results[i].get("readability", {}).get("composite_score", 100))  # type: ignore[arg-type]
+        for idx in sorted(prose_depth_results):
+            rb = prose_depth_results[idx].get("readability", {})
+            md += (
+                f"| Section {idx + 1} "
+                f"| {rb.get('sentence_complexity_score', {}).get('score', 0)}/100 "
+                f"| {rb.get('clarity_score', {}).get('score', 0)}/100 "
+                f"| {rb.get('jargon_opacity_score', {}).get('score', 0)}/100 "
+                f"| {rb.get('composite_score', 0)}/100 |\n"
+            )
+        md += "\n"
+        weakest_rb = prose_depth_results[weakest_rb_idx].get("readability", {})
+        md += f"### Lowest Readability — Section {weakest_rb_idx + 1} (Composite: {weakest_rb.get('composite_score', 0)}/100)\n\n"
+        for sub_key, sub_label in [("sentence_complexity_score", "Sentence Complexity"), ("clarity_score", "Clarity"), ("jargon_opacity_score", "Jargon/Opacity")]:
+            sub = weakest_rb.get(sub_key, {})
+            md += f"**{sub_label} ({sub.get('score', 0)}/100):** {sub.get('analysis', '')}\n"
+            md += f"- *Tip:* {sub.get('actionable_advice', '')}\n"
+        opacity_examples = weakest_rb.get("opacity_examples", [])
+        if opacity_examples:
+            md += "\n**Opacity Examples:**\n"
+            for ex in opacity_examples:
+                md += f'- "{ex}"\n'
+        md += "\n"
 
     md += "---\n## Detailed Chunk Breakdown\n\n"
 

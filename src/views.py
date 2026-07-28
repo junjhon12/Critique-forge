@@ -11,11 +11,13 @@ from src.ai_client import (
     analyze_character_arc_snapshot,
     analyze_secondary_char_util,
     analyze_agency_deep_dive,
+    analyze_prose_depth,
     CritiqueResult, CharacterData, HookCritiqueResult, QueryLetterResult, CliffhangerResult,
     RecapResult, TitleBlurbTagResult,
     AddictionScoreResult, RetentionSimResult, TropeRadarResult,
     DialogueQualityResult, CharacterArcEntry, CharacterArcSnapshotResult,
     SecondaryCharacterEntry, SecondaryCharUtilResult, AgencyDeepDiveResult,
+    ProseDepthResult,
 )
 from src.consistency import merge_entity, StoryBibleEntry, ConsistencyFlag
 from src.cache import _cache_key, load_cache, save_cache
@@ -502,6 +504,27 @@ def render_full_manuscript_mode(
                         save_cache(cache)
                     agency_deep_dive_results[scene["index"]] = agency_result
 
+                # --- PROSE DEPTH (per section, LLM; all formats — single combined call) ---
+                prose_depth_results: dict[int, ProseDepthResult] = {}
+                words_for_prose_depth = raw_text.split()
+                for scene in scenes:
+                    _ = progress_bar.progress(
+                        0.98, text=f"Analysing prose depth for section {scene['index'] + 1} of {len(scenes)}..."
+                    )
+                    start = scene["start_word"]
+                    end = start + scene["word_count"]
+                    section_text_pd = " ".join(words_for_prose_depth[start:end])
+                    if not section_text_pd.strip():
+                        continue
+                    pd_key = _cache_key(section_text_pd, "ProseDepth", selected_genre)
+                    if pd_key in cache:
+                        pd_result: ProseDepthResult = cache[pd_key]
+                    else:
+                        pd_result = analyze_prose_depth(section_text_pd, genre=selected_genre)
+                        cache[pd_key] = pd_result
+                        save_cache(cache)
+                    prose_depth_results[scene["index"]] = pd_result
+
                 # --- ARC HEALTH (derived from addiction scores or conflict_and_stakes; Web Novel only) ---
                 arc_health_flags: list[ArcHealthFlag] = []
                 if is_web_novel and len(scenes) >= 4:
@@ -575,6 +598,7 @@ def render_full_manuscript_mode(
                 st.session_state["last_platform_pacing_flags"] = platform_pacing_flags
                 st.session_state["last_cliffhanger_results"] = cliffhanger_results
                 st.session_state["last_readiness_checklist"] = readiness_checklist
+                st.session_state["prose_depth_results"] = prose_depth_results
 
                 # --- TENSION LINE GRAPH ---
                 if len(pacing_data["agency"]) > 1:
@@ -1379,6 +1403,184 @@ def render_full_manuscript_mode(
                                         _ = st.write(f"**{sub_label} ({data.get('score', 0)}/100):** {data.get('analysis', '')}")
                                         _ = st.info(f"💡 {data.get('actionable_advice', '')}")
 
+                # --- PROSE ELEGANCE AUDIT ---
+                pd_results = st.session_state.get("prose_depth_results", {})
+                if pd_results:
+                    with st.expander("✍️ Prose Elegance Audit"):
+                        elegance_rows = []
+                        for s in scenes:
+                            idx = s["index"]
+                            if idx not in pd_results:
+                                continue
+                            pe = pd_results[idx].get("prose_elegance", {})
+                            elegance_rows.append({
+                                "Section": s["heading"] or f"Scene {idx + 1}",
+                                "Rhythm Variety": pe.get("rhythm_variety", {}).get("score", 0),
+                                "Passive Voice": pe.get("passive_voice_score", {}).get("score", 0),
+                                "Adverb Density": pe.get("adverb_density_score", {}).get("score", 0),
+                                "Composite": pe.get("composite_score", 0),
+                            })
+                        if elegance_rows:
+                            _ = st.dataframe(elegance_rows, use_container_width=True)
+                            composites_pe = [row["Composite"] for row in elegance_rows]
+                            if len(composites_pe) > 1:
+                                _ = st.write("**Elegance Composite Trend**")
+                                _ = st.line_chart(composites_pe)
+                            # Drill-down for weakest section
+                            weakest_pe_idx = min(
+                                [s["index"] for s in scenes if s["index"] in pd_results],
+                                key=lambda i: pd_results[i].get("prose_elegance", {}).get("composite_score", 100),
+                            )
+                            weakest_pe = pd_results[weakest_pe_idx].get("prose_elegance", {})
+                            weakest_pe_label = scenes[weakest_pe_idx]["heading"] or f"Scene {weakest_pe_idx + 1}" if weakest_pe_idx < len(scenes) else f"Section {weakest_pe_idx + 1}"
+                            with st.expander(f"🔍 Weakest Section — {weakest_pe_label} (Composite: {weakest_pe.get('composite_score', 0)}/100)"):
+                                for sub_key, sub_label in [
+                                    ("rhythm_variety", "Rhythm Variety"),
+                                    ("passive_voice_score", "Passive Voice"),
+                                    ("adverb_density_score", "Adverb Density"),
+                                ]:
+                                    sub = weakest_pe.get(sub_key, {})
+                                    _ = st.write(f"**{sub_label} ({sub.get('score', 0)}/100):** {sub.get('analysis', '')}")
+                                    _ = st.info(f"💡 {sub.get('actionable_advice', '')}")
+                                weak_passages = weakest_pe.get("weak_passages", [])
+                                if weak_passages:
+                                    _ = st.write("**Weakest Passages:**")
+                                    for p in weak_passages:
+                                        _ = st.markdown(f"- *\"{p}\"*")
+
+                # --- SHOW-DON'T-TELL DEEP-DIVE ---
+                if pd_results:
+                    with st.expander("🔍 Show-Don't-Tell Deep-Dive"):
+                        sdt_rows = []
+                        for s in scenes:
+                            idx = s["index"]
+                            if idx not in pd_results:
+                                continue
+                            sdt = pd_results[idx].get("show_dont_tell", {})
+                            sdt_rows.append({
+                                "Section": s["heading"] or f"Scene {idx + 1}",
+                                "Compliance": sdt.get("compliance_score", 0),
+                                "Told %": sdt.get("told_percentage", 0),
+                                "Emotion Tells": sdt.get("emotion_tells", 0),
+                                "Action Tells": sdt.get("action_tells", 0),
+                                "Thought Tells": sdt.get("thought_tells", 0),
+                            })
+                        if sdt_rows:
+                            _ = st.dataframe(sdt_rows, use_container_width=True)
+                            compliance_scores = [row["Compliance"] for row in sdt_rows]
+                            if len(compliance_scores) > 1:
+                                _ = st.write("**Compliance Score Trend**")
+                                _ = st.line_chart(compliance_scores)
+                            # Drill-down for worst violations in lowest-scoring section
+                            weakest_sdt_idx = min(
+                                [s["index"] for s in scenes if s["index"] in pd_results],
+                                key=lambda i: pd_results[i].get("show_dont_tell", {}).get("compliance_score", 100),
+                            )
+                            weakest_sdt = pd_results[weakest_sdt_idx].get("show_dont_tell", {})
+                            weakest_sdt_label = scenes[weakest_sdt_idx]["heading"] or f"Scene {weakest_sdt_idx + 1}" if weakest_sdt_idx < len(scenes) else f"Section {weakest_sdt_idx + 1}"
+                            violations = weakest_sdt.get("worst_violations", [])
+                            if violations:
+                                sdt_category_icons = {
+                                    "emotion_telling": "💙 Emotion",
+                                    "action_telling": "🟠 Action",
+                                    "thought_telling": "💜 Thought",
+                                }
+                                severity_stars = {1: "★", 2: "★★", 3: "★★★"}
+                                with st.expander(f"⚠️ Worst Violations — {weakest_sdt_label} (Compliance: {weakest_sdt.get('compliance_score', 0)}/100)"):
+                                    for v in violations:
+                                        cat_label = sdt_category_icons.get(v.get("category", ""), v.get("category", ""))
+                                        stars = severity_stars.get(v.get("severity", 1), "★")
+                                        _ = st.markdown(f"**{cat_label}** {stars} — *\"{v.get('passage', '')}\"*")
+
+                # --- SENSORY DETAIL DENSITY ---
+                if pd_results:
+                    with st.expander("🌿 Sensory Detail Density"):
+                        sense_rows = []
+                        for s in scenes:
+                            idx = s["index"]
+                            if idx not in pd_results:
+                                continue
+                            sd = pd_results[idx].get("sensory_density", {})
+                            def _sense_icon(score: int) -> str:
+                                if score >= 60:
+                                    return f"🟢 {score}"
+                                elif score >= 30:
+                                    return f"🟡 {score}"
+                                else:
+                                    return f"🔴 {score}"
+                            sense_rows.append({
+                                "Section": s["heading"] or f"Scene {idx + 1}",
+                                "Sight": _sense_icon(sd.get("sight_score", 0)),
+                                "Sound": _sense_icon(sd.get("sound_score", 0)),
+                                "Smell": _sense_icon(sd.get("smell_score", 0)),
+                                "Touch": _sense_icon(sd.get("touch_score", 0)),
+                                "Taste": _sense_icon(sd.get("taste_score", 0)),
+                                "Immersion": sd.get("immersion_score", 0),
+                            })
+                        if sense_rows:
+                            _ = st.dataframe(sense_rows, use_container_width=True)
+                            immersion_scores = [pd_results[s["index"]].get("sensory_density", {}).get("immersion_score", 0) for s in scenes if s["index"] in pd_results]
+                            if len(immersion_scores) > 1:
+                                _ = st.write("**Immersion Score Trend**")
+                                _ = st.line_chart(immersion_scores)
+                            # Chronic blind spots — senses below 20 in 50%+ of sections
+                            sense_keys = ["sight", "sound", "smell", "touch", "taste"]
+                            n_sections = len([s for s in scenes if s["index"] in pd_results])
+                            chronic_blind_spots = [
+                                sense for sense in sense_keys
+                                if sum(
+                                    1 for s in scenes
+                                    if s["index"] in pd_results
+                                    and pd_results[s["index"]].get("sensory_density", {}).get(f"{sense}_score", 0) < 20
+                                ) >= (n_sections / 2)
+                            ]
+                            if chronic_blind_spots:
+                                _ = st.warning(f"⚠️ **Chronic Sensory Blind Spots** (absent in 50%+ of sections): {', '.join(s.title() for s in chronic_blind_spots)}. Consider weaving in more {' and '.join(chronic_blind_spots)} detail throughout your manuscript.")
+
+                # --- READABILITY & CLARITY ---
+                if pd_results:
+                    with st.expander("📖 Readability & Clarity"):
+                        readability_rows = []
+                        for s in scenes:
+                            idx = s["index"]
+                            if idx not in pd_results:
+                                continue
+                            rb = pd_results[idx].get("readability", {})
+                            readability_rows.append({
+                                "Section": s["heading"] or f"Scene {idx + 1}",
+                                "Sentence Complexity": rb.get("sentence_complexity_score", {}).get("score", 0),
+                                "Clarity": rb.get("clarity_score", {}).get("score", 0),
+                                "Jargon/Opacity": rb.get("jargon_opacity_score", {}).get("score", 0),
+                                "Composite": rb.get("composite_score", 0),
+                            })
+                        if readability_rows:
+                            _ = st.dataframe(readability_rows, use_container_width=True)
+                            composites_rb = [row["Composite"] for row in readability_rows]
+                            if len(composites_rb) > 1:
+                                _ = st.write("**Readability Composite Trend**")
+                                _ = st.line_chart(composites_rb)
+                            # Drill-down for lowest-scoring section
+                            weakest_rb_idx = min(
+                                [s["index"] for s in scenes if s["index"] in pd_results],
+                                key=lambda i: pd_results[i].get("readability", {}).get("composite_score", 100),
+                            )
+                            weakest_rb = pd_results[weakest_rb_idx].get("readability", {})
+                            weakest_rb_label = scenes[weakest_rb_idx]["heading"] or f"Scene {weakest_rb_idx + 1}" if weakest_rb_idx < len(scenes) else f"Section {weakest_rb_idx + 1}"
+                            with st.expander(f"🔍 Lowest Readability — {weakest_rb_label} (Composite: {weakest_rb.get('composite_score', 0)}/100)"):
+                                for sub_key, sub_label in [
+                                    ("sentence_complexity_score", "Sentence Complexity"),
+                                    ("clarity_score", "Clarity"),
+                                    ("jargon_opacity_score", "Jargon/Opacity"),
+                                ]:
+                                    sub = weakest_rb.get(sub_key, {})
+                                    _ = st.write(f"**{sub_label} ({sub.get('score', 0)}/100):** {sub.get('analysis', '')}")
+                                    _ = st.info(f"💡 {sub.get('actionable_advice', '')}")
+                                opacity_examples = weakest_rb.get("opacity_examples", [])
+                                if opacity_examples:
+                                    _ = st.write("**Opacity Examples:**")
+                                    for ex in opacity_examples:
+                                        _ = st.markdown(f"- *\"{ex}\"*")
+
                 # --- DOWNLOAD REPORT ---
                 report_str = generate_markdown_report(
                     avg_scores, all_results, all_characters, prose_snipers, section_scores,
@@ -1394,6 +1596,7 @@ def render_full_manuscript_mode(
                     arc_continuity_results=arc_continuity_results if arc_continuity_results else None,
                     secondary_char_util=secondary_char_util,
                     agency_deep_dive_results=agency_deep_dive_results if agency_deep_dive_results else None,
+                    prose_depth_results=prose_depth_results if prose_depth_results else None,
                 )
                 _ = st.download_button(
                     label="📥 Download Full Offline Report",

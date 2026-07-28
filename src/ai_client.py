@@ -748,3 +748,161 @@ def analyze_agency_deep_dive(section_text: str, genre: str = "None / General") -
     genre_guidance = GENRE_PRESETS.get(genre, "")
     full_system_prompt = AGENCY_DEEP_DIVE_SYSTEM_PROMPT + genre_guidance + "\n\n" + AGENCY_DEEP_DIVE_JSON_SCHEMA
     return cast(AgencyDeepDiveResult, _call_groq(full_system_prompt, section_text))
+
+
+# --- PILLAR 3: PROSE & CRAFT DEPTH ---
+
+class SDTViolation(TypedDict):
+    category: str  # "emotion_telling" | "action_telling" | "thought_telling"
+    passage: str
+    severity: int  # 1–3
+
+
+class ProseEleganceData(TypedDict):
+    rhythm_variety: PillarData
+    passive_voice_score: PillarData
+    adverb_density_score: PillarData
+    composite_score: int
+    weak_passages: list[str]
+
+
+class ShowDontTellData(TypedDict):
+    compliance_score: int
+    told_percentage: int
+    emotion_tells: int
+    action_tells: int
+    thought_tells: int
+    worst_violations: list[SDTViolation]
+
+
+class SensoryDensityData(TypedDict):
+    sight_score: int
+    sound_score: int
+    smell_score: int
+    touch_score: int
+    taste_score: int
+    immersion_score: int
+    blind_spot_senses: list[str]
+    strongest_passage: str
+
+
+class ReadabilityData(TypedDict):
+    sentence_complexity_score: PillarData
+    clarity_score: PillarData
+    jargon_opacity_score: PillarData
+    composite_score: int
+    opacity_examples: list[str]
+
+
+class ProseDepthResult(TypedDict):
+    prose_elegance: ProseEleganceData
+    show_dont_tell: ShowDontTellData
+    sensory_density: SensoryDensityData
+    readability: ReadabilityData
+
+
+PROSE_DEPTH_SYSTEM_PROMPT = """You are a senior line editor and prose coach with 20 years of experience across literary and commercial fiction. In a single reading pass, you evaluate a section of prose through four craft lenses simultaneously. You are precise, direct, and evidence-based — you cite specific passages rather than speaking in generalities.
+
+LENS 1 — PROSE ELEGANCE: Evaluate the craft of the prose itself across three dimensions.
+- Rhythm Variety: Do sentences vary meaningfully in length, cadence, and structure — short punches followed by longer sweeps — or does the prose trudge along in a monotonous mid-length drone? High score (80–100) = strong, deliberate rhythm variation. Low score (0–39) = mechanically uniform sentence structure throughout.
+- Passive Voice Score: Is passive voice used sparingly and intentionally, or does it drain energy from scenes that should feel active and urgent? High score = rare, purposeful passive. Low score = pervasive passive that distances the reader from the action.
+- Adverb Density Score: Are adverbs doing work that stronger verbs should be doing? High score = adverbs are absent or doing genuine work. Low score = adverb-heavy prose that indicates weak verb choices.
+Higher scores on all three dimensions = more elegant prose.
+
+LENS 2 — SHOW-DON'T-TELL: Evaluate the balance of shown vs. told prose.
+- Compliance Score (0–100): How fully does the section show rather than tell? 100 = entirely shown through action, dialogue, and physical detail; 0 = almost entirely told through authorial narration of feelings and events.
+- Told Percentage: Your estimated percentage of prose that is "telling" rather than "showing" (0–100).
+- Count violations by category: emotion_tells (directly stating a character's feeling — "she felt sad"), action_tells (narrating that something happened rather than dramatising it — "they argued for an hour"), thought_tells (reporting thoughts rather than enacting them — "he realised she was lying").
+- Extract the three worst offending passages with a severity rating: 1 (mild — telling where showing would be marginally better), 2 (moderate — a missed opportunity that weakens the scene), 3 (severe — a telling that actively undermines an emotional moment).
+
+LENS 3 — SENSORY DENSITY: Evaluate how fully the section grounds the reader in physical, sensory reality.
+- Score each of the five senses independently (0–100): Sight, Sound, Smell, Touch, Taste. Base the score on how many distinct, specific sensory details are present — not generic or decorative ones ("it smelled nice" scores near zero; "the sharp tang of copper on the back of her throat" scores high).
+- Immersion Score (0–100): An overall assessment of how fully the reader is placed inside the physical world of the scene.
+- Blind Spot Senses: List the names of any senses scoring below 20 (e.g. ["smell", "touch"]).
+- Strongest Passage: A short quoted phrase or sentence (from the text) that is the single most vivid, sensory piece of writing in the section.
+
+LENS 4 — READABILITY & CLARITY: Evaluate how easily a reader can follow the prose.
+- Sentence Complexity Score (0–100): How accessible is the sentence structure? High score = clear, well-constructed sentences even when complex; low score = habitually over-nested, inverted, or run-on sentences that lose the reader.
+- Clarity Score (0–100): How precisely is meaning communicated? High score = no ambiguity about who is doing what to whom and why; low score = pronouns with unclear antecedents, confusing geography, or actions that are hard to visualise.
+- Jargon/Opacity Score (0–100): How free is the prose of unnecessary domain-specific terms, abstract nouns, or obscure word choices that create friction? High score = accessible; low score = unnecessarily opaque. Note: literary complexity that earns its difficulty should not be penalised — only opacity without payoff.
+- Composite Score: A single overall readability score. Higher = more readable.
+- Opacity Examples: Up to 3 short quoted phrases from the text that exemplify low readability (convoluted sentences, jargon, unclear referents). Empty array if the section is clear throughout."""
+
+PROSE_DEPTH_JSON_SCHEMA = """
+You must evaluate the provided text through four craft lenses and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide a "prose_elegance" object containing:
+- "rhythm_variety": {"score": int 0-100, "analysis": "2-3 sentence assessment", "actionable_advice": "1-2 sentence recommendation"}
+- "passive_voice_score": {"score": int 0-100, "analysis": "2-3 sentence assessment", "actionable_advice": "1-2 sentence recommendation"}
+- "adverb_density_score": {"score": int 0-100, "analysis": "2-3 sentence assessment", "actionable_advice": "1-2 sentence recommendation"}
+- "composite_score": int 0-100 (weighted average: rhythm 40%, passive voice 35%, adverb density 25%)
+- "weak_passages": array of up to 3 short quoted strings from the text that best illustrate the prose's weakest moments (empty array if the prose is strong throughout)
+
+Provide a "show_dont_tell" object containing:
+- "compliance_score": int 0-100 (100 = fully shown, 0 = entirely told)
+- "told_percentage": int 0-100 (estimated percentage of prose that is telling rather than showing)
+- "emotion_tells": int count of emotion-telling violations in this section
+- "action_tells": int count of action-telling violations in this section
+- "thought_tells": int count of thought-telling violations in this section
+- "worst_violations": array of up to 3 objects, each: {"category": "emotion_telling"|"action_telling"|"thought_telling", "passage": "short quoted text", "severity": 1|2|3}
+
+Provide a "sensory_density" object containing:
+- "sight_score": int 0-100
+- "sound_score": int 0-100
+- "smell_score": int 0-100
+- "touch_score": int 0-100
+- "taste_score": int 0-100
+- "immersion_score": int 0-100 (overall sensory immersion, not a simple average)
+- "blind_spot_senses": array of sense name strings for any sense scoring below 20 (e.g. ["smell", "touch"]), empty array if none
+- "strongest_passage": a short quoted phrase or sentence from the text that is the most vivid sensory writing in the section (empty string if none)
+
+Provide a "readability" object containing:
+- "sentence_complexity_score": {"score": int 0-100, "analysis": "2-3 sentence assessment", "actionable_advice": "1-2 sentence recommendation"}
+- "clarity_score": {"score": int 0-100, "analysis": "2-3 sentence assessment", "actionable_advice": "1-2 sentence recommendation"}
+- "jargon_opacity_score": {"score": int 0-100, "analysis": "2-3 sentence assessment", "actionable_advice": "1-2 sentence recommendation"}
+- "composite_score": int 0-100 (weighted average: clarity 40%, sentence complexity 35%, jargon opacity 25%)
+- "opacity_examples": array of up to 3 short quoted strings from the text that exemplify low readability (empty array if the section is clear throughout)
+
+Output format must exactly match this JSON schema:
+{
+  "prose_elegance": {
+    "rhythm_variety": {"score": 0, "analysis": "", "actionable_advice": ""},
+    "passive_voice_score": {"score": 0, "analysis": "", "actionable_advice": ""},
+    "adverb_density_score": {"score": 0, "analysis": "", "actionable_advice": ""},
+    "composite_score": 0,
+    "weak_passages": []
+  },
+  "show_dont_tell": {
+    "compliance_score": 0,
+    "told_percentage": 0,
+    "emotion_tells": 0,
+    "action_tells": 0,
+    "thought_tells": 0,
+    "worst_violations": [
+      {"category": "", "passage": "", "severity": 1}
+    ]
+  },
+  "sensory_density": {
+    "sight_score": 0,
+    "sound_score": 0,
+    "smell_score": 0,
+    "touch_score": 0,
+    "taste_score": 0,
+    "immersion_score": 0,
+    "blind_spot_senses": [],
+    "strongest_passage": ""
+  },
+  "readability": {
+    "sentence_complexity_score": {"score": 0, "analysis": "", "actionable_advice": ""},
+    "clarity_score": {"score": 0, "analysis": "", "actionable_advice": ""},
+    "jargon_opacity_score": {"score": 0, "analysis": "", "actionable_advice": ""},
+    "composite_score": 0,
+    "opacity_examples": []
+  }
+}"""
+
+
+def analyze_prose_depth(section_text: str, genre: str = "None / General") -> ProseDepthResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = PROSE_DEPTH_SYSTEM_PROMPT + genre_guidance + "\n\n" + PROSE_DEPTH_JSON_SCHEMA
+    return cast(ProseDepthResult, _call_groq(full_system_prompt, section_text))
