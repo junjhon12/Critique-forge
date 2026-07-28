@@ -80,6 +80,51 @@ class TitleBlurbTagResult(TypedDict):
     discoverability_note: str
 
 
+# --- PILLAR 2: CHARACTER & VOICE DEPTH ---
+
+class AgencyDeepDiveResult(TypedDict):
+    proactive_score: int
+    reactive_score: int
+    goal_clarity: PillarData
+    consequence_weight: PillarData
+    agency_type_label: str
+    key_observation: str
+
+
+class SecondaryCharacterEntry(TypedDict):
+    character_name: str
+    introduction_chapter: int
+    last_active_chapter: int
+    narrative_role: str
+    utilization_verdict: str
+    suggestion: str
+
+
+class SecondaryCharUtilResult(TypedDict):
+    characters: list[SecondaryCharacterEntry]
+    overall_note: str
+
+
+class CharacterArcEntry(TypedDict):
+    character_name: str
+    emotional_state: str
+    core_goal: str
+    arc_note: str
+
+
+class CharacterArcSnapshotResult(TypedDict):
+    characters: list[CharacterArcEntry]
+    section_index: int
+
+
+class DialogueQualityResult(TypedDict):
+    voice_consistency: PillarData
+    subtext_score: PillarData
+    dialogue_ratio_note: str
+    composite_score: int
+    flagged_lines: list[str]
+
+
 # --- PILLAR 1: ENGAGEMENT & READER RETENTION ---
 
 class AddictionScoreResult(TypedDict):
@@ -425,6 +470,133 @@ Output format must exactly match this JSON schema:
 }"""
 
 
+
+SECONDARY_CHAR_SYSTEM_PROMPT = """You are a structural editor who specialises in ensemble casts and the craft of secondary characterisation. You are analysing a manuscript excerpt (opening and closing passages) to identify secondary characters — supporting cast members who are not the protagonist(s) — and evaluate whether each character fulfils their narrative promise or quietly disappears after introduction. You are looking for characters who are introduced with specific traits, roles, or potential, but whose presence fades before they can meaningfully contribute to the story. You focus only on characters who actually appear in the provided text; do not invent characters. For each secondary character, identify their apparent narrative role, classify their utilization, and provide a concrete suggestion if underused or prop-like."""
+
+SECONDARY_CHAR_JSON_SCHEMA = """
+You must evaluate the provided manuscript excerpt and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+The user message will specify the total chapter count. Use this to judge whether a character's last active chapter is in the first half of the manuscript (potential underutilization risk).
+
+Provide "characters": an array of objects, one per named secondary character (exclude protagonist(s)), each containing:
+1. "character_name": The character's name as it appears in the text.
+2. "introduction_chapter": An integer estimate of which chapter they first appear (1-based). Use 1 if they appear in the opening excerpt.
+3. "last_active_chapter": An integer estimate of the last chapter they appear in, based on the closing excerpt. Use the total chapter count if they appear in the closing excerpt.
+4. "narrative_role": Exactly one of "mentor", "rival", "love_interest", "comic_relief", "plot_device", or "other".
+5. "utilization_verdict": Exactly one of "well-used" (character has a clear role and meaningful presence across both excerpts), "underused" (character is introduced with potential but fades or appears only in one excerpt), or "prop" (character exists solely to deliver information or trigger events without their own arc).
+6. "suggestion": If utilization_verdict is "underused" or "prop", a concrete 1-2 sentence suggestion for deepening their function. If "well-used", an empty string.
+
+Provide "overall_note": a 1-2 sentence summary of the ensemble's health — e.g. how well the secondary cast supports the protagonist's arc and whether there are notable underutilization patterns.
+
+Output format must exactly match this JSON schema:
+{
+  "characters": [
+    {
+      "character_name": "",
+      "introduction_chapter": 1,
+      "last_active_chapter": 1,
+      "narrative_role": "",
+      "utilization_verdict": "",
+      "suggestion": ""
+    }
+  ],
+  "overall_note": ""
+}"""
+
+
+AGENCY_DEEP_DIVE_SYSTEM_PROMPT = """You are a story coach specialising in protagonist agency and active storytelling. You read each section of a manuscript with one central question: is the protagonist the CAUSE of events, or the EFFECT of events caused by others? You evaluate four dimensions. (1) Proactive Score — how often does the protagonist make deliberate choices that drive what happens next, rather than having things happen to them? (2) Reactive Score — how much of this section is the protagonist reacting, following, waiting, or being carried by the plot rather than steering it? (3) Goal Clarity — does the protagonist have a clear, specific goal they are actively pursuing in this section, or is their objective vague, absent, or passive? (4) Consequence Weight — do the protagonist's decisions in this section carry visible, meaningful consequences, or do choices vanish without narrative impact? Your agency type labels are defined precisely: "Fully Proactive" (protagonist drives nearly all events), "Mostly Proactive" (protagonist mostly drives events with some reactive passages), "Reactive" (protagonist is primarily responding to events, rarely driving them), "Passenger" (protagonist is along for the ride — things happen around and to them but they do not meaningfully cause any event)."""
+
+AGENCY_DEEP_DIVE_JSON_SCHEMA = """
+You must evaluate the provided section and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide "proactive_score": an integer from 0 to 100 for how much of this section the protagonist is actively driving events through deliberate choices.
+
+Provide "reactive_score": an integer from 0 to 100 for how much of this section the protagonist is passively reacting to events driven by others. Note: proactive_score + reactive_score need not sum to 100 — both can be moderate if the section is mixed.
+
+Provide a "goal_clarity" object containing:
+1. "score": An integer from 0 to 100 for how clearly and specifically the protagonist's goal is established and pursued in this section.
+2. "analysis": A 2-3 sentence assessment of whether the protagonist's objective is clear, specific, and actively pursued.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to clarify or sharpen the protagonist's goal in this section.
+
+Provide a "consequence_weight" object containing:
+1. "score": An integer from 0 to 100 for how meaningfully the protagonist's decisions carry visible consequences in this section.
+2. "analysis": A 2-3 sentence assessment of whether choices have real stakes and impact, or whether they feel consequence-free.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to add or sharpen consequence to the protagonist's key decision in this section.
+
+Provide "agency_type_label": exactly one of "Fully Proactive", "Mostly Proactive", "Reactive", or "Passenger".
+
+Provide "key_observation": a single sentence — the most important observation about the protagonist's agency in this section (e.g. "The protagonist spends the entire section waiting for others to make decisions, with no clear goal driving her actions.").
+
+Output format must exactly match this JSON schema:
+{
+  "proactive_score": 0,
+  "reactive_score": 0,
+  "goal_clarity": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "consequence_weight": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "agency_type_label": "",
+  "key_observation": ""
+}"""
+
+
+CHARACTER_ARC_SYSTEM_PROMPT = """You are a developmental editor who specialises in tracking character psychology and transformation through a manuscript. You are reading a SINGLE SECTION of a manuscript and your job is to identify every named character who appears in the text and capture a snapshot of their current emotional state and core goal. You will also be given a JSON object containing the last known emotional state for each character from prior sections. Using that context, you classify each character's arc note as one of: "progressing" (their state or goal has meaningfully changed since last seen), "stalled" (no meaningful change despite sufficient time passing), "reversal" (their motivation or emotional state has shifted abruptly in a way that lacks sufficient setup in this section), or "resolved" (their arc goal has been achieved or abandoned with narrative intention). If a character is appearing for the first time, always classify them as "progressing". Only report characters who are named and active in this section — do not invent characters not present in the text."""
+
+CHARACTER_ARC_JSON_SCHEMA = """
+You must evaluate the provided section and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+The user message will begin with a JSON block of prior character states in this format:
+  Prior states: {"Character Name": "last known emotional state | last known core goal", ...}
+Use this to judge whether each character has progressed, stalled, or reversed since their last appearance.
+
+Provide "characters": an array of objects, one per named character present in this section, each containing:
+1. "character_name": The character's name as it appears in the text.
+2. "emotional_state": A short phrase (5-10 words) describing their dominant emotional state in this section (e.g. "grieving the loss of her brother", "quietly furious at being overlooked").
+3. "core_goal": A short phrase (5-10 words) describing what they are actively trying to achieve or avoid in this section (e.g. "escape the city before dawn", "prevent her father from finding out").
+4. "arc_note": Exactly one of "progressing", "stalled", "reversal", or "resolved".
+
+Provide "section_index": always 0 (the caller will set the real index).
+
+Output format must exactly match this JSON schema:
+{
+  "characters": [
+    {"character_name": "", "emotional_state": "", "core_goal": "", "arc_note": ""}
+  ],
+  "section_index": 0
+}"""
+
+
+
+DIALOGUE_QUALITY_SYSTEM_PROMPT = """You are a dialogue coach and produced screenwriter with deep experience in both prose fiction and screen. You read narrative text through one lens above all others: is the dialogue doing real work? You evaluate three things. (1) Voice Consistency — does each character in this passage sound genuinely distinct, or do all characters speak in the same authorial voice? (2) Subtext Score — does the dialogue carry emotional content through what is implied, avoided, or contradicted by action, or does it state emotions and intentions outright (on-the-nose)? (3) Dialogue Ratio — is the balance of dialogue to prose narration appropriate for the genre and pacing of this section, or is it so dialogue-heavy that context is lost, or so narration-heavy that character voices are buried? You cite specific lines as evidence. You are not interested in grammar; you are interested in authenticity and craft."""
+
+DIALOGUE_QUALITY_JSON_SCHEMA = """
+You must evaluate the provided text and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
+
+Provide a "voice_consistency" object containing:
+1. "score": An integer from 0 to 100 for how distinctly each speaking character sounds — 100 means every character's dialogue is immediately recognizable as theirs without a speech tag; 0 means all characters sound identical.
+2. "analysis": A 2-3 sentence assessment of whether character voices are distinct and authentic in this passage.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to sharpen voice differentiation.
+
+Provide a "subtext_score" object containing:
+1. "score": An integer from 0 to 100 for how much emotional content is carried through implication, avoidance, or contradiction rather than stated directly — 100 means the dialogue never says what it means but always means what it says; 0 means every emotion and intention is stated outright.
+2. "analysis": A 2-3 sentence assessment of whether the dialogue trusts the reader or over-explains.
+3. "actionable_advice": A specific, 1-2 sentence recommendation to replace on-the-nose exchanges with subtext.
+
+Provide "dialogue_ratio_note": a single string (1-2 sentences) noting whether the balance of dialogue to prose narration is appropriate for the genre and pace of this section, or flagging an imbalance (e.g. "This section is 80% dialogue with minimal grounding action beats, leaving character positions and emotions unanchored.").
+
+Provide "composite_score": a single integer from 0 to 100 representing overall dialogue quality for this section. Weight voice_consistency 40%, subtext_score 40%, and dialogue_ratio balance 20%.
+
+Provide "flagged_lines": an array of up to 3 short quoted strings — the most on-the-nose or voice-inconsistent lines from the passage, each as a direct quote. Empty array if no flagrant examples are found.
+
+Output format must exactly match this JSON schema:
+{
+  "voice_consistency": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "subtext_score": {"score": 0, "analysis": "", "actionable_advice": ""},
+  "dialogue_ratio_note": "",
+  "composite_score": 0,
+  "flagged_lines": []
+}"""
+
+
+
 TITLE_BLURB_TAG_SYSTEM_PROMPT = """You are a serial-platform discoverability editor (RoyalRoad, Webnovel, Scribble Hub, Wattpad-style publishing). Unlike a literary agent judging a query letter for a single acquisition decision, your job is to optimize the cover copy that readers and ranking algorithms actually browse by: the title, the blurb, and the genre/trope tags. On these platforms, a reader scrolls past hundreds of titles and thumbnails in seconds, and tags directly drive which category pages and recommendation feeds a story surfaces in. A mediocre blurb or generic tag set quietly kills a story's discoverability no matter how good the prose is. You write commercial, trope-forward, scroll-stopping copy, not literary-query prose."""
 
 TITLE_BLURB_TAG_JSON_SCHEMA = """
@@ -541,3 +713,38 @@ def analyze_chunk(
     genre_guidance = GENRE_PRESETS.get(genre, "")
     full_system_prompt = base_prompt + genre_guidance + "\n\n" + JSON_SCHEMA
     return cast(CritiqueResult, _call_groq(full_system_prompt, text_chunk))
+
+
+def analyze_dialogue_quality(section_text: str, genre: str = "None / General") -> DialogueQualityResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = DIALOGUE_QUALITY_SYSTEM_PROMPT + genre_guidance + "\n\n" + DIALOGUE_QUALITY_JSON_SCHEMA
+    return cast(DialogueQualityResult, _call_groq(full_system_prompt, section_text))
+
+
+def analyze_character_arc_snapshot(
+    section_text: str,
+    genre: str = "None / General",
+    prior_states: dict[str, str] | None = None,
+) -> CharacterArcSnapshotResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = CHARACTER_ARC_SYSTEM_PROMPT + genre_guidance + "\n\n" + CHARACTER_ARC_JSON_SCHEMA
+    prior_json = json.dumps(prior_states or {})
+    user_message = f"Prior states: {prior_json}\n\nSection text:\n{section_text}"
+    return cast(CharacterArcSnapshotResult, _call_groq(full_system_prompt, user_message))
+
+
+def analyze_secondary_char_util(
+    manuscript_excerpt: str,
+    genre: str = "None / General",
+    chapter_count: int = 1,
+) -> SecondaryCharUtilResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = SECONDARY_CHAR_SYSTEM_PROMPT + genre_guidance + "\n\n" + SECONDARY_CHAR_JSON_SCHEMA
+    user_message = f"Total chapter count: {chapter_count}\n\nManuscript excerpt:\n{manuscript_excerpt}"
+    return cast(SecondaryCharUtilResult, _call_groq(full_system_prompt, user_message))
+
+
+def analyze_agency_deep_dive(section_text: str, genre: str = "None / General") -> AgencyDeepDiveResult:
+    genre_guidance = GENRE_PRESETS.get(genre, "")
+    full_system_prompt = AGENCY_DEEP_DIVE_SYSTEM_PROMPT + genre_guidance + "\n\n" + AGENCY_DEEP_DIVE_JSON_SCHEMA
+    return cast(AgencyDeepDiveResult, _call_groq(full_system_prompt, section_text))

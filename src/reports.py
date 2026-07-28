@@ -3,6 +3,7 @@ from typing import TypedDict, cast
 from src.ai_client import (
     CritiqueResult, CharacterData, PillarData, HookCritiqueResult, QueryLetterResult,
     CliffhangerResult, AddictionScoreResult, RetentionSimResult, TropeRadarResult,
+    DialogueQualityResult, CharacterArcSnapshotResult, SecondaryCharUtilResult, AgencyDeepDiveResult,
 )
 from src.structure import (
     SceneInfo, BeatMatch, PacingFlag, ChapterLengthFlag, PlatformPacingFlag,
@@ -90,6 +91,10 @@ def generate_markdown_report(
     addiction_results: dict[int, AddictionScoreResult] | None = None,
     arc_health_flags: list[ArcHealthFlag] | None = None,
     trope_radar_result: TropeRadarResult | None = None,
+    dialogue_quality_results: dict[int, DialogueQualityResult] | None = None,
+    arc_continuity_results: dict[int, CharacterArcSnapshotResult] | None = None,
+    secondary_char_util: SecondaryCharUtilResult | None = None,
+    agency_deep_dive_results: dict[int, AgencyDeepDiveResult] | None = None,
 ) -> str:
     """Generates a downloadable text report."""
     md = "# Critique-Forge Analysis Report\n\n"
@@ -261,6 +266,125 @@ def generate_markdown_report(
                     f"\"{flag['new_value']}\" (Section {flag['chunk_index'] + 1})\n"
                 )
             md += "\n"
+
+    # --- DIALOGUE QUALITY ANALYSIS ---
+    if dialogue_quality_results:
+        md += "---\n## 💬 Dialogue Quality Analysis\n\n"
+        md += "| Section | Voice Consistency | Subtext Score | Composite |\n"
+        md += "|---------|------------------|--------------|----------|\n"
+        for idx in sorted(dialogue_quality_results):
+            r = dialogue_quality_results[idx]
+            md += (
+                f"| Section {idx + 1} "
+                f"| {r['voice_consistency'].get('score', 0)}/100 "
+                f"| {r['subtext_score'].get('score', 0)}/100 "
+                f"| **{r.get('composite_score', 0)}/100** |\n"
+            )
+        md += "\n"
+        # Sub-score breakdown for each section
+        for idx in sorted(dialogue_quality_results):
+            r = dialogue_quality_results[idx]
+            composite = r.get("composite_score", 0)
+            if composite < 60:
+                md += f"#### Section {idx + 1} — Dialogue Notes (Composite {composite}/100)\n"
+                vc = r.get("voice_consistency", {})
+                sub = r.get("subtext_score", {})
+                md += f"- **Voice Consistency ({vc.get('score', 0)}/100):** {vc.get('analysis', '')}\n"
+                md += f"  - *Tip:* {vc.get('actionable_advice', '')}\n"
+                md += f"- **Subtext Score ({sub.get('score', 0)}/100):** {sub.get('analysis', '')}\n"
+                md += f"  - *Tip:* {sub.get('actionable_advice', '')}\n"
+                ratio_note = r.get("dialogue_ratio_note", "")
+                if ratio_note:
+                    md += f"- **Dialogue Ratio:** {ratio_note}\n"
+                flagged = r.get("flagged_lines", [])
+                if flagged:
+                    md += "- **Flagged Lines:**\n"
+                    for line in flagged:
+                        md += f'  - 🔴 "{line}"\n'
+                md += "\n"
+
+    # --- CHARACTER ARC CONTINUITY ---
+    if arc_continuity_results:
+        char_arc_timelines: dict[str, list[tuple[int, str, str, str]]] = {}
+        for sec_idx, snap in sorted(arc_continuity_results.items()):
+            for entry in snap.get("characters", []):
+                name = entry.get("character_name", "")
+                if not name:
+                    continue
+                char_arc_timelines.setdefault(name, []).append((
+                    sec_idx,
+                    entry.get("emotional_state", ""),
+                    entry.get("core_goal", ""),
+                    entry.get("arc_note", ""),
+                ))
+        major_chars = {n: t for n, t in char_arc_timelines.items() if len(t) >= 3}
+        if major_chars:
+            md += "---\n## 🧬 Character Arc Continuity\n\n"
+            arc_note_icons = {"progressing": "🟢", "stalled": "🟡", "reversal": "🔴", "resolved": "✅"}
+            for char_name, timeline in sorted(major_chars.items()):
+                stall_count = sum(1 for _, _, _, note in timeline if note == "stalled")
+                reversal_count = sum(1 for _, _, _, note in timeline if note == "reversal")
+                flag = " *(Arc Reversal detected)*" if reversal_count else (" *(Stalled Arc)*" if stall_count >= 5 else "")
+                md += f"### 👤 {char_name}{flag}\n\n"
+                md += "| Section | Emotional State | Core Goal | Arc Note |\n"
+                md += "|---------|----------------|-----------|----------|\n"
+                for sec_idx, state, goal, note in timeline:
+                    icon = arc_note_icons.get(note, "")
+                    md += f"| Section {sec_idx + 1} | {state} | {goal} | {icon} {note.title()} |\n"
+                md += "\n"
+
+    # --- SECONDARY CHARACTER UNDERUTILIZATION ---
+    if secondary_char_util is not None:
+        secondary_chars = secondary_char_util.get("characters", [])
+        overall_note = secondary_char_util.get("overall_note", "")
+        if secondary_chars:
+            md += "---\n## 👥 Secondary Character Underutilization\n\n"
+            if overall_note:
+                md += f"> {overall_note}\n\n"
+            verdict_icons = {"well-used": "✅", "underused": "🟡", "prop": "🔴"}
+            md += "| Character | Role | Verdict | Intro Ch. | Last Active Ch. | Suggestion |\n"
+            md += "|-----------|------|---------|-----------|-----------------|------------|\n"
+            for c in secondary_chars:
+                icon = verdict_icons.get(c.get("utilization_verdict", ""), "")
+                md += (
+                    f"| {c.get('character_name', '')} "
+                    f"| {c.get('narrative_role', '').replace('_', ' ').title()} "
+                    f"| {icon} {c.get('utilization_verdict', '').title()} "
+                    f"| {c.get('introduction_chapter', '?')} "
+                    f"| {c.get('last_active_chapter', '?')} "
+                    f"| {c.get('suggestion', '') or '—'} |\n"
+                )
+            md += "\n"
+
+    # --- PROTAGONIST AGENCY DEEP-DIVE ---
+    if agency_deep_dive_results:
+        md += "---\n## 🎯 Protagonist Agency Deep-Dive\n\n"
+        md += "| Section | Proactive | Reactive | Goal Clarity | Consequence Wt. | Agency Type |\n"
+        md += "|---------|-----------|----------|-------------|----------------|------------|\n"
+        agency_icons = {"Fully Proactive": "🟢", "Mostly Proactive": "🔵", "Reactive": "🟡", "Passenger": "🔴"}
+        for idx in sorted(agency_deep_dive_results):
+            r = agency_deep_dive_results[idx]
+            icon = agency_icons.get(r.get("agency_type_label", ""), "")
+            md += (
+                f"| Section {idx + 1} "
+                f"| {r.get('proactive_score', 0)}/100 "
+                f"| {r.get('reactive_score', 0)}/100 "
+                f"| {r.get('goal_clarity', {}).get('score', 0)}/100 "
+                f"| {r.get('consequence_weight', {}).get('score', 0)}/100 "
+                f"| {icon} {r.get('agency_type_label', '')} |\n"
+            )
+        md += "\n"
+        passenger_sections = [(idx, r) for idx, r in sorted(agency_deep_dive_results.items()) if r.get("agency_type_label") == "Passenger"]
+        if passenger_sections:
+            md += "### ⚠️ Passenger Sections\n\n"
+            for idx, r in passenger_sections:
+                md += f"**Section {idx + 1}:** {r.get('key_observation', '')}\n\n"
+                gc = r.get("goal_clarity", {})
+                cw = r.get("consequence_weight", {})
+                md += f"- **Goal Clarity ({gc.get('score', 0)}/100):** {gc.get('analysis', '')}\n"
+                md += f"  - *Tip:* {gc.get('actionable_advice', '')}\n"
+                md += f"- **Consequence Weight ({cw.get('score', 0)}/100):** {cw.get('analysis', '')}\n"
+                md += f"  - *Tip:* {cw.get('actionable_advice', '')}\n\n"
 
     md += "---\n## Detailed Chunk Breakdown\n\n"
 

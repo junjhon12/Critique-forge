@@ -7,9 +7,15 @@ from src.ai_client import (
     analyze_chunk, analyze_hook, analyze_query_letter, analyze_cliffhanger, extract_bible_entities,
     analyze_recap, analyze_title_blurb_tags,
     analyze_addiction_score, analyze_retention_sim, analyze_trope_radar,
+    analyze_dialogue_quality,
+    analyze_character_arc_snapshot,
+    analyze_secondary_char_util,
+    analyze_agency_deep_dive,
     CritiqueResult, CharacterData, HookCritiqueResult, QueryLetterResult, CliffhangerResult,
     RecapResult, TitleBlurbTagResult,
     AddictionScoreResult, RetentionSimResult, TropeRadarResult,
+    DialogueQualityResult, CharacterArcEntry, CharacterArcSnapshotResult,
+    SecondaryCharacterEntry, SecondaryCharUtilResult, AgencyDeepDiveResult,
 )
 from src.consistency import merge_entity, StoryBibleEntry, ConsistencyFlag
 from src.cache import _cache_key, load_cache, save_cache
@@ -403,6 +409,98 @@ def render_full_manuscript_mode(
                             cache[addiction_key] = addiction_result
                             save_cache(cache)
                         addiction_results[scene["index"]] = addiction_result
+
+                # --- DIALOGUE QUALITY ANALYSIS (per section, LLM; all formats) ---
+                dialogue_quality_results: dict[int, DialogueQualityResult] = {}
+                words_for_dialogue = raw_text.split()
+                for scene in scenes:
+                    _ = progress_bar.progress(
+                        0.94, text=f"Analysing dialogue quality for section {scene['index'] + 1} of {len(scenes)}..."
+                    )
+                    start = scene["start_word"]
+                    end = start + scene["word_count"]
+                    section_text_dq = " ".join(words_for_dialogue[start:end])
+                    if not section_text_dq.strip():
+                        continue
+                    dq_key = _cache_key(section_text_dq, "DialogueQuality", selected_genre)
+                    if dq_key in cache:
+                        dq_result: DialogueQualityResult = cache[dq_key]
+                    else:
+                        dq_result = analyze_dialogue_quality(section_text_dq, genre=selected_genre)
+                        cache[dq_key] = dq_result
+                        save_cache(cache)
+                    dialogue_quality_results[scene["index"]] = dq_result
+
+
+                # --- CHARACTER ARC CONTINUITY (per section, LLM; all formats) ---
+                arc_continuity_results: dict[int, CharacterArcSnapshotResult] = {}
+                arc_prior_states: dict[str, str] = {}
+                words_for_arc = raw_text.split()
+                for scene in scenes:
+                    _ = progress_bar.progress(
+                        0.96, text=f"Tracking character arcs for section {scene['index'] + 1} of {len(scenes)}..."
+                    )
+                    start = scene["start_word"]
+                    end = start + scene["word_count"]
+                    section_text_arc = " ".join(words_for_arc[start:end])
+                    if not section_text_arc.strip():
+                        continue
+                    arc_key = _cache_key(section_text_arc + str(arc_prior_states), "CharacterArc", selected_genre)
+                    if arc_key in cache:
+                        arc_result: CharacterArcSnapshotResult = cache[arc_key]
+                    else:
+                        arc_result = analyze_character_arc_snapshot(
+                            section_text_arc, genre=selected_genre, prior_states=arc_prior_states
+                        )
+                        cache[arc_key] = arc_result
+                        save_cache(cache)
+                    arc_result["section_index"] = scene["index"]
+                    arc_continuity_results[scene["index"]] = arc_result
+                    # Update prior_states with the latest snapshot
+                    for char_entry in arc_result.get("characters", []):
+                        name = char_entry.get("character_name", "")
+                        if name:
+                            arc_prior_states[name] = (
+                                f"{char_entry.get('emotional_state', '')} | {char_entry.get('core_goal', '')}"
+                            )
+
+                # --- SECONDARY CHARACTER UNDERUTILIZATION (single post-loop call; all formats) ---
+                secondary_char_util: SecondaryCharUtilResult | None = None
+                words_all = raw_text.split()
+                opening_words = words_all[:2000]
+                closing_words = words_all[-2000:] if len(words_all) > 2000 else []
+                manuscript_bookends = " ".join(opening_words) + "\n\n[...]\n\n" + " ".join(closing_words)
+                if manuscript_bookends.strip():
+                    sec_char_key = _cache_key(manuscript_bookends, "SecondaryCharUtil", selected_genre)
+                    if sec_char_key in cache:
+                        secondary_char_util = cache[sec_char_key]
+                    else:
+                        secondary_char_util = analyze_secondary_char_util(
+                            manuscript_bookends, genre=selected_genre, chapter_count=len(scenes)
+                        )
+                        cache[sec_char_key] = secondary_char_util
+                        save_cache(cache)
+
+                # --- PROTAGONIST AGENCY DEEP-DIVE (per section, LLM; all formats) ---
+                agency_deep_dive_results: dict[int, AgencyDeepDiveResult] = {}
+                words_for_agency = raw_text.split()
+                for scene in scenes:
+                    _ = progress_bar.progress(
+                        0.97, text=f"Analysing protagonist agency for section {scene['index'] + 1} of {len(scenes)}..."
+                    )
+                    start = scene["start_word"]
+                    end = start + scene["word_count"]
+                    section_text_agency = " ".join(words_for_agency[start:end])
+                    if not section_text_agency.strip():
+                        continue
+                    agency_key = _cache_key(section_text_agency, "AgencyDeepDive", selected_genre)
+                    if agency_key in cache:
+                        agency_result: AgencyDeepDiveResult = cache[agency_key]
+                    else:
+                        agency_result = analyze_agency_deep_dive(section_text_agency, genre=selected_genre)
+                        cache[agency_key] = agency_result
+                        save_cache(cache)
+                    agency_deep_dive_results[scene["index"]] = agency_result
 
                 # --- ARC HEALTH (derived from addiction scores or conflict_and_stakes; Web Novel only) ---
                 arc_health_flags: list[ArcHealthFlag] = []
@@ -1077,6 +1175,210 @@ def render_full_manuscript_mode(
                 else:
                     _ = st.success(f"No contradictions detected across {len(chunks)} section(s).")
 
+                # --- DIALOGUE QUALITY ANALYSIS UI (all formats) ---
+                if dialogue_quality_results:
+                    _ = st.write("---")
+                    with st.expander("💬 Dialogue Quality Analysis", expanded=False):
+                        _ = st.caption(
+                            "Per-section scoring of dialogue craft across three dimensions: "
+                            "Voice Consistency (are characters distinct?), Subtext Score (implied vs. stated emotion?), "
+                            "and Dialogue Ratio (prose/dialogue balance). Composite is weighted 40/40/20."
+                        )
+                        _ = st.dataframe(
+                            [
+                                {
+                                    "Section": scenes[idx]["heading"] or f"Scene {idx + 1}"
+                                    if idx < len(scenes) else f"Section {idx + 1}",
+                                    "Voice Consistency": r["voice_consistency"].get("score", 0),
+                                    "Subtext Score": r["subtext_score"].get("score", 0),
+                                    "Dialogue Ratio": r.get("dialogue_ratio_note", ""),
+                                    "Composite": r.get("composite_score", 0),
+                                }
+                                for idx, r in sorted(dialogue_quality_results.items())
+                            ],
+                            use_container_width=True,
+                        )
+                        composite_dq_scores = [
+                            dialogue_quality_results[s["index"]].get("composite_score", 0)
+                            for s in scenes
+                            if s["index"] in dialogue_quality_results
+                        ]
+                        if len(composite_dq_scores) > 1:
+                            _ = st.write("**Dialogue Quality Trend**")
+                            _ = st.line_chart(composite_dq_scores)
+                        # Drill-down for lowest-scoring section
+                        if dialogue_quality_results:
+                            min_idx = min(dialogue_quality_results, key=lambda i: dialogue_quality_results[i].get("composite_score", 100))
+                            min_result = dialogue_quality_results[min_idx]
+                            label = scenes[min_idx]["heading"] or f"Scene {min_idx + 1}" if min_idx < len(scenes) else f"Section {min_idx + 1}"
+                            with st.expander(f"🔍 Weakest Dialogue Section: {label} ({min_result.get('composite_score', 0)}/100)"):
+                                for sub, sub_label in [
+                                    ("voice_consistency", "Voice Consistency"),
+                                    ("subtext_score", "Subtext Score"),
+                                ]:
+                                    data = min_result.get(sub, {})
+                                    _ = st.write(f"**{sub_label} ({data.get('score', 0)}/100):** {data.get('analysis', '')}")
+                                    _ = st.info(f"💡 {data.get('actionable_advice', '')}")
+                                ratio_note = min_result.get("dialogue_ratio_note", "")
+                                if ratio_note:
+                                    _ = st.write(f"**Dialogue Ratio:** {ratio_note}")
+                                flagged = min_result.get("flagged_lines", [])
+                                if flagged:
+                                    _ = st.write("**Flagged Lines:**")
+                                    for line in flagged:
+                                        _ = st.warning(f'🔴 "{line}"')
+
+                # --- CHARACTER ARC CONTINUITY UI (all formats) ---
+                if arc_continuity_results:
+                    # Build per-character arc timeline: {name -> [(section_idx, emotional_state, core_goal, arc_note)]}
+                    char_arc_timelines: dict[str, list[tuple[int, str, str, str]]] = {}
+                    for sec_idx, snap in sorted(arc_continuity_results.items()):
+                        for entry in snap.get("characters", []):
+                            name = entry.get("character_name", "")
+                            if not name:
+                                continue
+                            char_arc_timelines.setdefault(name, []).append((
+                                sec_idx,
+                                entry.get("emotional_state", ""),
+                                entry.get("core_goal", ""),
+                                entry.get("arc_note", ""),
+                            ))
+                    # Show only characters appearing in 3+ sections
+                    major_chars = {n: t for n, t in char_arc_timelines.items() if len(t) >= 3}
+                    if major_chars:
+                        _ = st.write("---")
+                        with st.expander("🧬 Character Arc Continuity", expanded=False):
+                            _ = st.caption(
+                                "Tracks each named character's emotional state and core goal across sections. "
+                                "Flags stalled arcs (no meaningful change over 5+ sections) and arc reversals "
+                                "(abrupt motivation shifts). Only characters appearing in 3+ sections are shown."
+                            )
+                            arc_note_icons = {
+                                "progressing": "🟢",
+                                "stalled": "🟡",
+                                "reversal": "🔴",
+                                "resolved": "✅",
+                            }
+                            for char_name, timeline in sorted(major_chars.items()):
+                                stall_count = sum(1 for _, _, _, note in timeline if note == "stalled")
+                                reversal_count = sum(1 for _, _, _, note in timeline if note == "reversal")
+                                badge = ""
+                                if reversal_count:
+                                    badge = " 🔴 Arc Reversal"
+                                elif stall_count >= 5:
+                                    badge = " 🟡 Stalled Arc"
+                                with st.expander(f"{'👤'} {char_name}{badge}"):
+                                    _ = st.dataframe(
+                                        [
+                                            {
+                                                "Section": f"Section {sec_idx + 1}",
+                                                "Emotional State": state,
+                                                "Core Goal": goal,
+                                                "Arc Note": f"{arc_note_icons.get(note, '')} {note.title()}",
+                                            }
+                                            for sec_idx, state, goal, note in timeline
+                                        ],
+                                        use_container_width=True,
+                                    )
+                    else:
+                        _ = st.write("---")
+                        with st.expander("🧬 Character Arc Continuity", expanded=False):
+                            _ = st.info("No characters appear in 3 or more sections — arc continuity requires a longer manuscript.")
+
+                # --- SECONDARY CHARACTER UNDERUTILIZATION UI (all formats) ---
+                if secondary_char_util is not None:
+                    secondary_chars = secondary_char_util.get("characters", [])
+                    overall_note = secondary_char_util.get("overall_note", "")
+                    _ = st.write("---")
+                    with st.expander("👥 Secondary Character Underutilization", expanded=False):
+                        _ = st.caption(
+                            "Analyses the opening and closing passages to identify secondary characters "
+                            "who are introduced with narrative promise but fade before delivering on it."
+                        )
+                        if overall_note:
+                            _ = st.info(overall_note)
+                        if secondary_chars:
+                            verdict_icons = {
+                                "well-used": "✅",
+                                "underused": "🟡",
+                                "prop": "🔴",
+                            }
+                            _ = st.dataframe(
+                                [
+                                    {
+                                        "Character": c.get("character_name", ""),
+                                        "Role": c.get("narrative_role", "").replace("_", " ").title(),
+                                        "Verdict": f"{verdict_icons.get(c.get('utilization_verdict', ''), '')} {c.get('utilization_verdict', '').title()}",
+                                        "Intro Ch.": c.get("introduction_chapter", "?"),
+                                        "Last Active Ch.": c.get("last_active_chapter", "?"),
+                                    }
+                                    for c in secondary_chars
+                                ],
+                                use_container_width=True,
+                            )
+                            for c in secondary_chars:
+                                if c.get("utilization_verdict") in ("underused", "prop") and c.get("suggestion"):
+                                    icon = verdict_icons.get(c.get("utilization_verdict", ""), "")
+                                    _ = st.warning(
+                                        f"{icon} **{c.get('character_name', '')} ({c.get('utilization_verdict', '').title()}):** {c.get('suggestion', '')}"
+                                    )
+                        else:
+                            _ = st.success("✅ No secondary character underutilization issues detected.")
+
+                # --- PROTAGONIST AGENCY DEEP-DIVE UI (all formats) ---
+                if agency_deep_dive_results:
+                    _ = st.write("---")
+                    with st.expander("🎯 Protagonist Agency Deep-Dive", expanded=False):
+                        _ = st.caption(
+                            "Per-section breakdown of protagonist agency type: whether the protagonist drives events "
+                            "(Fully Proactive / Mostly Proactive) or is carried by them (Reactive / Passenger). "
+                            "Passenger sections are highlighted — they are the highest-risk scenes for losing readers."
+                        )
+                        agency_label_icons = {
+                            "Fully Proactive": "🟢",
+                            "Mostly Proactive": "🔵",
+                            "Reactive": "🟡",
+                            "Passenger": "🔴",
+                        }
+                        _ = st.dataframe(
+                            [
+                                {
+                                    "Section": scenes[idx]["heading"] or f"Scene {idx + 1}"
+                                    if idx < len(scenes) else f"Section {idx + 1}",
+                                    "Proactive": r.get("proactive_score", 0),
+                                    "Reactive": r.get("reactive_score", 0),
+                                    "Goal Clarity": r.get("goal_clarity", {}).get("score", 0),
+                                    "Consequence Wt.": r.get("consequence_weight", {}).get("score", 0),
+                                    "Agency Type": f"{agency_label_icons.get(r.get('agency_type_label', ''), '')} {r.get('agency_type_label', '')}",
+                                }
+                                for idx, r in sorted(agency_deep_dive_results.items())
+                            ],
+                            use_container_width=True,
+                        )
+                        proactive_scores = [
+                            agency_deep_dive_results[s["index"]].get("proactive_score", 0)
+                            for s in scenes
+                            if s["index"] in agency_deep_dive_results
+                        ]
+                        if len(proactive_scores) > 1:
+                            _ = st.write("**Proactive Score Trend**")
+                            _ = st.line_chart(proactive_scores)
+                        # Drill-down for Passenger sections
+                        passenger_sections = [
+                            (idx, r) for idx, r in sorted(agency_deep_dive_results.items())
+                            if r.get("agency_type_label") == "Passenger"
+                        ]
+                        if passenger_sections:
+                            _ = st.write("**⚠️ Passenger Sections — Protagonist Not Driving Events:**")
+                            for idx, r in passenger_sections:
+                                label = scenes[idx]["heading"] or f"Scene {idx + 1}" if idx < len(scenes) else f"Section {idx + 1}"
+                                with st.expander(f"🔴 Passenger: {label}"):
+                                    _ = st.write(f"**Observation:** {r.get('key_observation', '')}")
+                                    for sub, sub_label in [("goal_clarity", "Goal Clarity"), ("consequence_weight", "Consequence Weight")]:
+                                        data = r.get(sub, {})
+                                        _ = st.write(f"**{sub_label} ({data.get('score', 0)}/100):** {data.get('analysis', '')}")
+                                        _ = st.info(f"💡 {data.get('actionable_advice', '')}")
+
                 # --- DOWNLOAD REPORT ---
                 report_str = generate_markdown_report(
                     avg_scores, all_results, all_characters, prose_snipers, section_scores,
@@ -1088,6 +1390,10 @@ def render_full_manuscript_mode(
                     addiction_results=addiction_results if is_web_novel else None,
                     arc_health_flags=arc_health_flags if is_web_novel else None,
                     trope_radar_result=trope_radar_result if is_web_novel else None,
+                    dialogue_quality_results=dialogue_quality_results if dialogue_quality_results else None,
+                    arc_continuity_results=arc_continuity_results if arc_continuity_results else None,
+                    secondary_char_util=secondary_char_util,
+                    agency_deep_dive_results=agency_deep_dive_results if agency_deep_dive_results else None,
                 )
                 _ = st.download_button(
                     label="📥 Download Full Offline Report",
