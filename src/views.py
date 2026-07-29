@@ -209,18 +209,25 @@ def _render_trope_radar(trope_radar_result: "TropeRadarResult | None") -> None:
                     "Trope": t.get("trope_name", ""),
                     "Verdict": f"{verdict_icons.get(t.get('freshness_verdict', ''), '')} {t.get('freshness_verdict', '')}",
                     "Evidence": t.get("evidence", ""),
-                    "Suggestion": t.get("suggestion", "") or "—",
+                    "Suggestion": t.get("suggestion", ""),
                 }
                 for t in detected
             ]
+            column_widths = {
+                "Trope": "small",
+                "Verdict": "small",
+                "Evidence": "large",
+                "Suggestion": "large",
+            }
+            present_columns = [
+                col for col in column_widths if any(row[col] for row in rows)
+            ]
             _ = st.dataframe(
-                rows,
+                [{col: row[col] for col in present_columns} for row in rows],
                 use_container_width=True,
                 column_config={
-                    "Trope": st.column_config.TextColumn(width="small"),
-                    "Verdict": st.column_config.TextColumn(width="small"),
-                    "Evidence": st.column_config.TextColumn(width="large"),
-                    "Suggestion": st.column_config.TextColumn(width="large"),
+                    col: st.column_config.TextColumn(width=column_widths[col])
+                    for col in present_columns
                 },
             )
             for t in detected:
