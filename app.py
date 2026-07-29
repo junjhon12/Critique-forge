@@ -26,6 +26,28 @@ def _parse_beats(raw: str) -> list[BeatDefinition]:
 # --- PAGE CONFIG & SIDEBAR ---
 st.set_page_config(page_title="Critique-Forge AI", layout="wide")
 
+_ = st.markdown(
+    """
+    <style>
+    section[data-testid="stSidebar"] > div {
+        overflow-y: auto;
+        max-height: 100vh;
+        padding-bottom: 2rem;
+        scrollbar-width: thin;
+        scrollbar-color: #888 transparent;
+    }
+    section[data-testid="stSidebar"] > div::-webkit-scrollbar {
+        width: 10px;
+    }
+    section[data-testid="stSidebar"] > div::-webkit-scrollbar-thumb {
+        background-color: #888;
+        border-radius: 6px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 _ = st.sidebar.title("⚙️ Editor Settings")
 manuscript_name: str = st.sidebar.text_input("Manuscript name (for version history)", value="Untitled")
 
