@@ -189,6 +189,49 @@ def render_agent_read_mode(manuscript_name: str, selected_genre: str) -> None:
                 _ = st.error(f"An error occurred during grading: {str(e)}")
 
 
+def _render_trope_radar(trope_radar_result: "TropeRadarResult | None") -> None:
+    if trope_radar_result is None:
+        return
+    _ = st.write("---")
+    with st.expander("🎯 Trope Radar", expanded=False):
+        dna = trope_radar_result.get("trope_dna_summary", "")
+        if dna:
+            _ = st.info(f"**Trope DNA:** {dna}")
+        detected = trope_radar_result.get("detected_tropes", [])
+        if detected:
+            verdict_icons = {
+                "Fresh Twist": "✅",
+                "Standard Execution": "🟡",
+                "Cliche Risk": "🔴",
+            }
+            rows = [
+                {
+                    "Trope": t.get("trope_name", ""),
+                    "Verdict": f"{verdict_icons.get(t.get('freshness_verdict', ''), '')} {t.get('freshness_verdict', '')}",
+                    "Evidence": t.get("evidence", ""),
+                    "Suggestion": t.get("suggestion", "") or "—",
+                }
+                for t in detected
+            ]
+            _ = st.dataframe(
+                rows,
+                use_container_width=True,
+                column_config={
+                    "Trope": st.column_config.TextColumn(width="small"),
+                    "Verdict": st.column_config.TextColumn(width="small"),
+                    "Evidence": st.column_config.TextColumn(width="large"),
+                    "Suggestion": st.column_config.TextColumn(width="large"),
+                },
+            )
+            for t in detected:
+                if t.get("freshness_verdict") == "Cliche Risk" and t.get("suggestion"):
+                    _ = st.warning(
+                        f"🔴 **{t.get('trope_name', '')} — Cliché Risk:** {t.get('suggestion', '')}"
+                    )
+        else:
+            _ = st.info("No dominant web fiction tropes detected in the opening excerpt.")
+
+
 def render_full_manuscript_mode(
     manuscript_name: str,
     selected_persona: str,
@@ -226,7 +269,8 @@ def render_full_manuscript_mode(
         )
         text_input = st.text_area("Or paste the content here:", height=200)
 
-    if st.button("Analyze Manuscript"):
+    analyze_clicked = st.button("Analyze Manuscript")
+    if analyze_clicked:
         raw_text: str = ""
         chapter_files: list[tuple[str, str]] = []
 
@@ -613,6 +657,7 @@ def render_full_manuscript_mode(
                 st.session_state["last_cliffhanger_results"] = cliffhanger_results
                 st.session_state["last_readiness_checklist"] = readiness_checklist
                 st.session_state["prose_depth_results"] = prose_depth_results
+                st.session_state["last_trope_radar_result"] = trope_radar_result if is_web_novel else None
 
                 # --- TENSION LINE GRAPH ---
                 if len(pacing_data["agency"]) > 1:
@@ -1005,38 +1050,8 @@ def render_full_manuscript_mode(
                             _ = st.success("✅ No arc health issues detected — the tension curve looks healthy.")
 
                 # --- TROPE RADAR (Web Novel only) ---
-                if is_web_novel and trope_radar_result is not None:
-                    _ = st.write("---")
-                    with st.expander("🎯 Trope Radar", expanded=False):
-                        dna = trope_radar_result.get("trope_dna_summary", "")
-                        if dna:
-                            _ = st.info(f"**Trope DNA:** {dna}")
-                        detected = trope_radar_result.get("detected_tropes", [])
-                        if detected:
-                            verdict_icons = {
-                                "Fresh Twist": "✅",
-                                "Standard Execution": "🟡",
-                                "Cliche Risk": "🔴",
-                            }
-                            _ = st.dataframe(
-                                [
-                                    {
-                                        "Trope": t.get("trope_name", ""),
-                                        "Verdict": f"{verdict_icons.get(t.get('freshness_verdict', ''), '')} {t.get('freshness_verdict', '')}",
-                                        "Evidence": t.get("evidence", ""),
-                                        "Suggestion": t.get("suggestion", "") or "—",
-                                    }
-                                    for t in detected
-                                ],
-                                use_container_width=True,
-                            )
-                            for t in detected:
-                                if t.get("freshness_verdict") == "Cliche Risk" and t.get("suggestion"):
-                                    _ = st.warning(
-                                        f"🔴 **{t.get('trope_name', '')} — Cliché Risk:** {t.get('suggestion', '')}"
-                                    )
-                        else:
-                            _ = st.info("No dominant web fiction tropes detected in the opening excerpt.")
+                if is_web_novel:
+                    _render_trope_radar(trope_radar_result)
 
                 # --- RECAP / "PREVIOUSLY ON..." GENERATOR (LLM; Web Novel only) ---
                 if is_web_novel and len(scenes) >= 1:
@@ -1657,6 +1672,14 @@ def render_full_manuscript_mode(
                 key="history_pillar_choice",
             )
             _ = st.line_chart([entry["avg_scores"].get(history_pillar_choice, 0) for entry in manuscript_history])
+
+    # --- TROPE RADAR (persisted across reruns) ---
+    if (
+        not analyze_clicked
+        and st.session_state.get("last_trope_radar_result") is not None
+        and st.session_state.get("manuscript_id") == history_manuscript_id
+    ):
+        _render_trope_radar(st.session_state["last_trope_radar_result"])
 
     # --- REVISE & COMPARE ---
     if "last_chunks" in st.session_state and st.session_state.get("manuscript_id") == history_manuscript_id:
