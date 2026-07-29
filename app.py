@@ -2,16 +2,58 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.ai_client import GENRE_PRESETS
-from src.structure import STRUCTURE_TEMPLATES, PLATFORM_WORD_COUNT_NORMS
+from src.structure import STRUCTURE_TEMPLATES, PLATFORM_WORD_COUNT_NORMS, BeatDefinition
+from src.user_presets import load_user_presets, save_genre_preset, save_structure_template
 from src.views import render_query_letter_mode, render_agent_read_mode, render_full_manuscript_mode, render_retention_sim_mode
 
 _ = load_dotenv()
+
+
+def _parse_beats(raw: str) -> list[BeatDefinition]:
+    beats: list[BeatDefinition] = []
+    for line in raw.splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) != 3 or not parts[0]:
+            continue
+        try:
+            expected_pct = float(parts[1])
+        except ValueError:
+            continue
+        beats.append({"name": parts[0], "expected_pct": expected_pct, "description": parts[2]})
+    return beats
+
 
 # --- PAGE CONFIG & SIDEBAR ---
 st.set_page_config(page_title="Critique-Forge AI", layout="wide")
 
 _ = st.sidebar.title("⚙️ Editor Settings")
 manuscript_name: str = st.sidebar.text_input("Manuscript name (for version history)", value="Untitled")
+
+_user_presets = load_user_presets()
+all_genre_presets = {**GENRE_PRESETS, **_user_presets["genres"]}
+all_structure_templates = {**STRUCTURE_TEMPLATES, **_user_presets["structure_templates"]}
+
+with st.sidebar.expander("+ Add custom genre/format"):
+    new_genre_name = st.text_input("Name", key="new_genre_name")
+    new_genre_guidance = st.text_area(
+        "Guidance for the AI critic (same style as built-in presets)",
+        key="new_genre_guidance",
+        help="E.g. 'GENRE FOCUS: This is ... Judge X heavily on Y.'",
+    )
+    if st.button("Save genre preset") and new_genre_name.strip():
+        save_genre_preset(new_genre_name.strip(), new_genre_guidance.strip())
+        st.rerun()
+
+with st.sidebar.expander("+ Add custom structure template"):
+    new_template_name = st.text_input("Name", key="new_template_name")
+    beats_raw = st.text_area(
+        "One beat per line: Name | expected % | description",
+        key="new_template_beats",
+        help="Example: Inciting Incident | 10 | The event that sets the story in motion.",
+    )
+    if st.button("Save structure template") and new_template_name.strip():
+        save_structure_template(new_template_name.strip(), _parse_beats(beats_raw))
+        st.rerun()
 
 writing_for: str = st.sidebar.radio(
     "Writing for:",
@@ -38,7 +80,7 @@ manuscript_format: str = "Web Novel"
 selected_platform: str = "None"
 li_names: list[str] = []
 
-_web_novel_genres = [k for k in GENRE_PRESETS if k.startswith("Web Novel") or k == "None / General"]
+_web_novel_genres = [k for k in all_genre_presets if k.startswith("Web Novel") or k == "None / General"]
 
 if analysis_mode == "Full Manuscript":
     if _is_web_novel_track:
@@ -61,10 +103,10 @@ if analysis_mode == "Full Manuscript":
         if not custom_prompt.strip():
             _ = st.sidebar.warning("Enter a custom persona prompt to use it during analysis.")
 
-    genre_options = _web_novel_genres if _is_web_novel_track else list(GENRE_PRESETS.keys())
+    genre_options = _web_novel_genres if _is_web_novel_track else list(all_genre_presets.keys())
     selected_genre = st.sidebar.selectbox("Genre / format:", genre_options)
     selected_structure_template = st.sidebar.selectbox(
-        "Structure template (optional):", list(STRUCTURE_TEMPLATES.keys())
+        "Structure template (optional):", list(all_structure_templates.keys())
     )
 
     if manuscript_format == "Web Novel":
@@ -85,7 +127,7 @@ if analysis_mode == "Full Manuscript":
             )
             li_names = [n.strip() for n in li_names_raw.split(",") if n.strip()]
 elif analysis_mode == "Read Like an Agent (First Page)":
-    selected_genre = st.sidebar.selectbox("Genre / format:", list(GENRE_PRESETS.keys()))
+    selected_genre = st.sidebar.selectbox("Genre / format:", list(all_genre_presets.keys()))
 elif analysis_mode == "Chapter One Retention Simulator":
     selected_genre = st.sidebar.selectbox("Genre / format:", _web_novel_genres)
 

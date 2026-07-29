@@ -223,6 +223,15 @@ GENRE FOCUS: This is Harem / Reverse Harem serialized fiction. Judge Compelling 
 GENRE FOCUS: This is Cultivation / Xianxia serialized fiction. Judge Compelling Arcs on rank/realm progression pacing — breakthroughs should follow a legible tier system and feel earned through trial, resource, or insight rather than arbitrary. Judge Tight Scene Structure on tournament-arc and sect-conflict conventions (clear stakes for each duel/trial, escalating opponent strength) and on master-disciple or sect-hierarchy dynamics being used to raise stakes. Reward chapter-ending hooks tied to a rank reveal, challenge announcement, or looming stronger opponent under Conflict & Stakes.""",
 }
 
+
+def get_genre_guidance(genre: str) -> str:
+    if genre in GENRE_PRESETS:
+        return GENRE_PRESETS[genre]
+    from src.user_presets import load_user_presets
+
+    return load_user_presets()["genres"].get(genre, "")
+
+
 JSON_SCHEMA = """
 You must evaluate the provided text and return your analysis EXCLUSIVELY as a valid JSON object. Do not include any markdown formatting or conversational text.
 For each of the four pillars, provide:
@@ -652,19 +661,19 @@ def _call_groq(system_prompt: str, text: str) -> dict:
 
 
 def analyze_hook(text_chunk: str, genre: str = "None / General") -> HookCritiqueResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = PERSONAS["The Literary Agent"] + genre_guidance + "\n\n" + HOOK_JSON_SCHEMA
     return cast(HookCritiqueResult, _call_groq(full_system_prompt, text_chunk))
 
 
 def analyze_cliffhanger(chapter_ending_text: str, genre: str = "None / General") -> CliffhangerResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = CLIFFHANGER_SYSTEM_PROMPT + genre_guidance + "\n\n" + CLIFFHANGER_JSON_SCHEMA
     return cast(CliffhangerResult, _call_groq(full_system_prompt, chapter_ending_text))
 
 
 def analyze_recap(chapter_text: str, genre: str = "None / General") -> RecapResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = RECAP_SYSTEM_PROMPT + genre_guidance + "\n\n" + RECAP_JSON_SCHEMA
     return cast(RecapResult, _call_groq(full_system_prompt, chapter_text))
 
@@ -675,7 +684,7 @@ def analyze_query_letter(text: str) -> QueryLetterResult:
 
 
 def analyze_title_blurb_tags(text: str, genre: str = "None / General") -> TitleBlurbTagResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = TITLE_BLURB_TAG_SYSTEM_PROMPT + genre_guidance + "\n\n" + TITLE_BLURB_TAG_JSON_SCHEMA
     return cast(TitleBlurbTagResult, _call_groq(full_system_prompt, text))
 
@@ -686,19 +695,19 @@ def extract_bible_entities(text_chunk: str) -> BibleExtractionResult:
 
 
 def analyze_addiction_score(chapter_text: str, genre: str = "None / General") -> AddictionScoreResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = ADDICTION_SYSTEM_PROMPT + genre_guidance + "\n\n" + ADDICTION_SCORE_JSON_SCHEMA
     return cast(AddictionScoreResult, _call_groq(full_system_prompt, chapter_text))
 
 
 def analyze_retention_sim(chapter_text: str, genre: str = "None / General") -> RetentionSimResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = RETENTION_SIM_SYSTEM_PROMPT + genre_guidance + "\n\n" + RETENTION_SIM_JSON_SCHEMA
     return cast(RetentionSimResult, _call_groq(full_system_prompt, chapter_text))
 
 
 def analyze_trope_radar(manuscript_excerpt: str, genre: str = "None / General") -> TropeRadarResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = TROPE_RADAR_SYSTEM_PROMPT + genre_guidance + "\n\n" + TROPE_RADAR_JSON_SCHEMA
     return cast(TropeRadarResult, _call_groq(full_system_prompt, manuscript_excerpt))
 
@@ -710,13 +719,13 @@ def analyze_chunk(
     genre: str = "None / General",
 ) -> CritiqueResult:
     base_prompt = custom_system_prompt if custom_system_prompt else PERSONAS.get(persona, PERSONAS["Ruthless Critic"])
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = base_prompt + genre_guidance + "\n\n" + JSON_SCHEMA
     return cast(CritiqueResult, _call_groq(full_system_prompt, text_chunk))
 
 
 def analyze_dialogue_quality(section_text: str, genre: str = "None / General") -> DialogueQualityResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = DIALOGUE_QUALITY_SYSTEM_PROMPT + genre_guidance + "\n\n" + DIALOGUE_QUALITY_JSON_SCHEMA
     return cast(DialogueQualityResult, _call_groq(full_system_prompt, section_text))
 
@@ -726,7 +735,7 @@ def analyze_character_arc_snapshot(
     genre: str = "None / General",
     prior_states: dict[str, str] | None = None,
 ) -> CharacterArcSnapshotResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = CHARACTER_ARC_SYSTEM_PROMPT + genre_guidance + "\n\n" + CHARACTER_ARC_JSON_SCHEMA
     prior_json = json.dumps(prior_states or {})
     user_message = f"Prior states: {prior_json}\n\nSection text:\n{section_text}"
@@ -738,14 +747,14 @@ def analyze_secondary_char_util(
     genre: str = "None / General",
     chapter_count: int = 1,
 ) -> SecondaryCharUtilResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = SECONDARY_CHAR_SYSTEM_PROMPT + genre_guidance + "\n\n" + SECONDARY_CHAR_JSON_SCHEMA
     user_message = f"Total chapter count: {chapter_count}\n\nManuscript excerpt:\n{manuscript_excerpt}"
     return cast(SecondaryCharUtilResult, _call_groq(full_system_prompt, user_message))
 
 
 def analyze_agency_deep_dive(section_text: str, genre: str = "None / General") -> AgencyDeepDiveResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = AGENCY_DEEP_DIVE_SYSTEM_PROMPT + genre_guidance + "\n\n" + AGENCY_DEEP_DIVE_JSON_SCHEMA
     return cast(AgencyDeepDiveResult, _call_groq(full_system_prompt, section_text))
 
@@ -903,6 +912,6 @@ Output format must exactly match this JSON schema:
 
 
 def analyze_prose_depth(section_text: str, genre: str = "None / General") -> ProseDepthResult:
-    genre_guidance = GENRE_PRESETS.get(genre, "")
+    genre_guidance = get_genre_guidance(genre)
     full_system_prompt = PROSE_DEPTH_SYSTEM_PROMPT + genre_guidance + "\n\n" + PROSE_DEPTH_JSON_SCHEMA
     return cast(ProseDepthResult, _call_groq(full_system_prompt, section_text))

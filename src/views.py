@@ -44,6 +44,20 @@ from src.reports import (
 )
 
 
+def score_to_rank(score: int) -> str:
+    if score >= 90:
+        return "S"
+    if score >= 75:
+        return "A"
+    if score >= 60:
+        return "B"
+    if score >= 45:
+        return "C"
+    if score >= 30:
+        return "D"
+    return "E"
+
+
 def render_query_letter_mode() -> None:
     _ = st.markdown("Paste your query letter or synopsis to critique its hook, genre clarity, and stakes.")
 
@@ -634,23 +648,23 @@ def render_full_manuscript_mode(
 
                 with col1:
                     _ = st.subheader("Agency & Conflict")
-                    _ = st.write("**Character Agency (Avg)**")
+                    _ = st.write(f"**Character Agency (Rank: {score_to_rank(avg_scores['agency'])})**")
                     _ = st.progress(avg_scores["agency"])
                     _ = st.success(f"**Tip from Final Scene:** {pillar_data(final_chunk, 'agency').get('actionable_advice', '')}")
 
                     _ = st.write("---")
-                    _ = st.write("**Conflict & Stakes (Avg)**")
+                    _ = st.write(f"**Conflict & Stakes (Rank: {score_to_rank(avg_scores['conflict_and_stakes'])})**")
                     _ = st.progress(avg_scores["conflict_and_stakes"])
                     _ = st.warning(f"**Tip from Final Scene:** {pillar_data(final_chunk, 'conflict_and_stakes').get('actionable_advice', '')}")
 
                 with col2:
                     _ = st.subheader("Structure & Arcs")
-                    _ = st.write("**Compelling Arcs (Avg)**")
+                    _ = st.write(f"**Compelling Arcs (Rank: {score_to_rank(avg_scores['compelling_arcs'])})**")
                     _ = st.progress(avg_scores["compelling_arcs"])
                     _ = st.info(f"**Tip from Final Scene:** {pillar_data(final_chunk, 'compelling_arcs').get('actionable_advice', '')}")
 
                     _ = st.write("---")
-                    _ = st.write("**Tight Scene Structure (Avg)**")
+                    _ = st.write(f"**Tight Scene Structure (Rank: {score_to_rank(avg_scores['tight_scene_structure'])})**")
                     _ = st.progress(avg_scores["tight_scene_structure"])
                     _ = st.success(f"**Tip from Final Scene:** {pillar_data(final_chunk, 'tight_scene_structure').get('actionable_advice', '')}")
 

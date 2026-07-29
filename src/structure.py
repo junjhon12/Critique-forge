@@ -152,6 +152,12 @@ STRUCTURE_TEMPLATES: dict[str, list[BeatDefinition]] = {
         {"name": "Resurrection/Climax", "expected_pct": 90.0, "description": "The final, most dangerous test."},
         {"name": "Return with the Elixir", "expected_pct": 98.0, "description": "The hero returns transformed."},
     ],
+    "Kishōtenketsu (起承転結)": [
+        {"name": "Ki — Introduction", "expected_pct": 5.0, "description": "Characters, setting, and status quo are established."},
+        {"name": "Shō — Development", "expected_pct": 35.0, "description": "The situation is developed and elaborated without conflict yet."},
+        {"name": "Ten — Twist", "expected_pct": 75.0, "description": "An unexpected, often unrelated development recontextualizes what came before."},
+        {"name": "Ketsu — Conclusion", "expected_pct": 95.0, "description": "The twist's implications resolve into a new understanding or equilibrium."},
+    ],
 }
 
 
@@ -229,13 +235,21 @@ def detect_scenes(raw_text: str, chunks: list[str] | None = None) -> list[SceneI
     return []
 
 
+def get_structure_template(template_name: str) -> list[BeatDefinition]:
+    if template_name in STRUCTURE_TEMPLATES:
+        return STRUCTURE_TEMPLATES[template_name]
+    from src.user_presets import load_user_presets
+
+    return load_user_presets()["structure_templates"].get(template_name, [])
+
+
 def map_beats_to_scenes(
     scenes: list[SceneInfo],
     template_name: str,
     tolerance_pct: float = DEFAULT_TOLERANCE_PCT,
 ) -> list[BeatMatch]:
     """Map each beat in a structure template to the nearest scene, flagging missing beats."""
-    template = STRUCTURE_TEMPLATES.get(template_name, [])
+    template = get_structure_template(template_name)
     if not template or not scenes:
         return []
 
